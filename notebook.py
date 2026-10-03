@@ -18,34 +18,30 @@
 import marimo
 
 __generated_with = "0.25.1"
-app = marimo.App(sql_output="polars")
+app = marimo.App(app_title="DM Fútbol", sql_output="polars")
 
-with app.setup:
+with app.setup(hide_code=True):
     import marimo as mo
     import polars as pl
     import altair as alt
 
-
-@app.cell
-def _():
-    def from_csv(filename: str):
+    def _from_csv(filename: str):
         return pl.read_csv(filename, null_values=["NA"], schema_overrides={'date': pl.Date})
 
-    goal_scorers = from_csv("data/Goal_Scorers.csv")
-
-    match_results = from_csv("data/Match_Results.csv")
-
-    penalty_shootouts = from_csv("data/Penalty_Shootouts.csv")
-    return (goal_scorers,)
+    goal_scorers = _from_csv("data/Goal_Scorers.csv")
+    match_results = _from_csv("data/Match_Results.csv")
+    penalty_shootouts = _from_csv("data/Penalty_Shootouts.csv")
 
 
-@app.cell
-def _(goal_scorers):
-    goal_scorers
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    # Unión y limpieza de datos
+    """)
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     matches = mo.sql(
         f"""
@@ -80,7 +76,14 @@ def _():
         order by date asc
         """
     )
+    return (matches,)
+
+
+@app.cell
+def _():
+    goal_scorers
     return
+
 
 if __name__ == "__main__":
     app.run()
