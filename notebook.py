@@ -5,7 +5,6 @@
 #     "marimo",
 #     "mcp==2.2.0",
 #     "polars[pyarrow]==1.44.2",
-#     "pyarrow==25.0.1",
 #     "python-lsp-ruff==2.3.4",
 #     "ruff==0.16.9",
 #     "sqlglot==30.19.0",
@@ -18,7 +17,7 @@
 
 import marimo
 
-__generated_with = "0.25.0"
+__generated_with = "0.25.1"
 app = marimo.App(sql_output="polars")
 
 with app.setup:
@@ -37,33 +36,51 @@ def _():
     match_results = from_csv("data/Match_Results.csv")
 
     penalty_shootouts = from_csv("data/Penalty_Shootouts.csv")
-    return (penalty_shootouts,)
+    return (goal_scorers,)
 
 
 @app.cell
-def _(penalty_shootouts):
-    penalty_shootouts
+def _(goal_scorers):
+    goal_scorers
     return
 
 
 @app.cell
 def _():
-    _df = mo.sql(
+    matches = mo.sql(
         f"""
         select
-            ifnull(match_results.home_team, penalty_shootouts.home_team) as home_team,
-            ifnull(match_results.away_team, penalty_shootouts.away_team) as away_team,
-            columns(match_results.*) as "m_\\0",
-            columns(penalty_shootouts.*) as "p_\\0"
+            ifnull (match_results.date, penalty_shootouts.date) as date,
+            ifnull (
+                match_results.home_team,
+                penalty_shootouts.home_team
+            ) as home_team,
+            match_results.home_score,
+            ifnull (
+                match_results.away_team,
+                penalty_shootouts.away_team
+            ) as away_team,
+            match_results.away_score,
+            case
+                when match_results.home_score > match_results.away_score then match_results.home_team
+                when match_results.home_score < match_results.away_score then match_results.away_team
+                else penalty_shootouts.winner
+            end as winner,
+            case
+                when penalty_shootouts.date is null then 'goals'
+                else 'penalties'
+            end as won_by,
+            penalty_shootouts.first_shooter as penalty_first_shooter,
+            tournament,city,country,neutral
         from
             match_results
             full outer join penalty_shootouts on match_results.date = penalty_shootouts.date
             and match_results.home_team = penalty_shootouts.home_team
             and match_results.away_team = penalty_shootouts.away_team
+        order by date asc
         """
     )
     return
-
 
 if __name__ == "__main__":
     app.run()
