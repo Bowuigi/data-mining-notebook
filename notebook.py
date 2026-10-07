@@ -36,6 +36,8 @@ with app.setup(hide_code=True):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
+    Nota: Se utilizó IA **sólo** para agilizar la escritura de código y la verificación de datos. En particular, el proceso KDD se llevó a cabo bajo dirección humana y "a pasitos", revisando todo 2 veces por las dudas. Aplicación: OpenCode; Modelo: Space Bunny Free (uno de los "incógnito", eventualmente revelarán cuál es y quién lo hizo).
+
     # Fase 1: Objetivos de negocio
 
     - Objetivo descriptivo:
@@ -128,6 +130,39 @@ def matches_ir():
     return
 
 
+@app.cell
+def goal_scorers_ir():
+    def _numbered_goals():
+        # One row per goal, numbered 1..N in the order the goals happened.
+        # `sort` is stable, so goals sharing a minute keep their original order.
+        return (
+            goal_scorers.lazy()
+            .sort("date", "minute", nulls_last=True)
+            .with_columns(
+                goal_number=pl.int_range(1, pl.len() + 1).over(
+                    "date", "home_team", "away_team"
+                )
+            )
+            .select(
+                "date",
+                "home_team",
+                "away_team",
+                "goal_number",
+                "team",
+                "scorer",
+                "minute",
+                "own_goal",
+                "penalty",
+            )
+        )
+
+
+    goal_scorers_ir = _numbered_goals().collect()
+    goal_scorers_ir
+
+    return
+
+
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
@@ -136,7 +171,22 @@ def _():
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Cosas raras encontradas:
+    - En `goal_scorers`, los goles en tiempo extra (45' + $n$ y 90' + $n$) se cuentan como del minuto 45/90, por lo que hay filas que parecen mostrar que algunos goles pasaron "al mismo tiempo". 1797 filas afectadas para el minuto 90, 925 filas afectadas para el minuto 45.
+    - En `goal_scorers`, algunos minutos faltan. **Todos del período 26/11/1963 a 27/02/1980**, los países afectados son: Macao, Nueva Zelanda, Kuwait, Libia, Nigeria, Surinam, Islas Solomón, Rep. Dem. del Congo, Singapur, Irak, Indonesia, Honduras, Guatemala, Bahrain, Brunei, EEUU, Australia, Costa Rica, China, Catar, Fiji, Tanzania, Corea del Norte, Taiwan, Sudan, Tailandia, Senegal, Nueva Caledonia, Trinidad y Tobago, Ghana, Benin, Vanuatu, Uganda, Costa de Marfil, Bangladesh, Curaçao, Arabia Saudita, Zambia, Haití, Tahití, Jamaica, Gambia, Etiopía, Congo, Jordania, Malasia, El Salvador, Siria, Papua Nueva Guinea, Camerún.
+    - En `goal_scorers`, algunos `scorers` faltan. **Todos del período 24/02/1980 a 29/02/1980**, los países afectados son: Papúa Nueva Guinea, Vanuatu, Fiji, Islas Solomon, Nueva Caledonia, Tahití, Malasia y Catar.
+    - En `match_results`, Uruguay-Bolivia 2024/06/27 en realidad fue 5-0 (Facundo Pellistri 8', Darwin Núñez 21', Maximiliano Araújo 77', Federico Valverde 81', Rodrigo Bentancur 89'). `goal_scorers` lo muestra bien, por lo que juntar ambas tablas debería solucionar el error.
+
+    Es posible que haya nombres no-modernos.
+    - Congo y DR Congo son el mismo país?
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def _():
     _df = mo.sql(
         f"""
