@@ -30,7 +30,9 @@ with app.setup:
     ### Load data
 
     def _from_csv(filename: str):
-        return pl.read_csv(filename, null_values=["NA"], schema_overrides={'date': pl.Date})
+        return pl.read_csv(
+            filename, null_values=["NA"], schema_overrides={"date": pl.Date}
+        )
 
     goal_scorers = _from_csv("data/Goal_Scorers.csv")
     match_results = _from_csv("data/Match_Results.csv")
@@ -210,7 +212,7 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _():
+def quirks_doc():
     mo.md(r"""
     Cosas raras encontradas:
     - En `goal_scorers`, los goles en tiempo extra (45' + $n$ y 90' + $n$) se cuentan como del minuto 45/90, por lo que hay filas que parecen mostrar que algunos goles pasaron "al mismo tiempo". 1797 filas afectadas para el minuto 90, 925 filas afectadas para el minuto 45.
