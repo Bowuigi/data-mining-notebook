@@ -217,6 +217,7 @@ def _():
     - En `goal_scorers`, algunos minutos faltan. **Todos del período 26/11/1963 a 27/02/1980**, los países afectados son: Macao, Nueva Zelanda, Kuwait, Libia, Nigeria, Surinam, Islas Solomón, Rep. Dem. del Congo, Singapur, Irak, Indonesia, Honduras, Guatemala, Bahrain, Brunei, EEUU, Australia, Costa Rica, China, Catar, Fiji, Tanzania, Corea del Norte, Taiwan, Sudan, Tailandia, Senegal, Nueva Caledonia, Trinidad y Tobago, Ghana, Benin, Vanuatu, Uganda, Costa de Marfil, Bangladesh, Curaçao, Arabia Saudita, Zambia, Haití, Tahití, Jamaica, Gambia, Etiopía, Congo, Jordania, Malasia, El Salvador, Siria, Papua Nueva Guinea, Camerún.
     - En `goal_scorers`, algunos `scorers` faltan. **Todos del período 24/02/1980 a 29/02/1980**, los países afectados son: Papúa Nueva Guinea, Vanuatu, Fiji, Islas Solomon, Nueva Caledonia, Tahití, Malasia y Catar.
     - En `match_results`, Uruguay-Bolivia 2024/06/27 en realidad fue 5-0 (Facundo Pellistri 8', Darwin Núñez 21', Maximiliano Araújo 77', Federico Valverde 81', Rodrigo Bentancur 89'). `goal_scorers` lo muestra bien, por lo que juntar ambas tablas debería solucionar el error.
+    - En `match_results`, Singapur-Malasia 0-3 04/09/1973 en realidad pasó el 07/09/1973. El 0-0 de la misma fecha es correcto.
 
     Es posible que haya nombres no-modernos.
     """)
