@@ -20,10 +20,14 @@ import marimo
 __generated_with = "0.25.1"
 app = marimo.App(app_title="DM Fútbol", sql_output="polars")
 
-with app.setup(hide_code=True):
+with app.setup:
+    ### Import libraries as required
+
     import marimo as mo
     import polars as pl
     import altair as alt
+
+    ### Load data
 
     def _from_csv(filename: str):
         return pl.read_csv(filename, null_values=["NA"], schema_overrides={'date': pl.Date})
