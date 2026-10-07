@@ -159,7 +159,6 @@ def goal_scorers_ir():
 
     goal_scorers_ir = _numbered_goals().collect()
     goal_scorers_ir
-
     return
 
 
@@ -181,7 +180,6 @@ def _():
     - En `match_results`, Uruguay-Bolivia 2024/06/27 en realidad fue 5-0 (Facundo Pellistri 8', Darwin Núñez 21', Maximiliano Araújo 77', Federico Valverde 81', Rodrigo Bentancur 89'). `goal_scorers` lo muestra bien, por lo que juntar ambas tablas debería solucionar el error.
 
     Es posible que haya nombres no-modernos.
-    - Congo y DR Congo son el mismo país?
     """)
     return
 
