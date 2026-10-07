@@ -138,20 +138,23 @@ def matches_ir():
         .collect()
     )
     matches_ir
-    return
+    return (matches_ir,)
 
 
 @app.cell
 def goal_scorers_ir():
     def _numbered_goals():
-        # One row per goal, numbered 1..N in the order the goals happened.
+        # One row per goal, numbered 1..N in the order that team scored them.
         # `sort` is stable, so goals sharing a minute keep their original order.
+        # Numbering is per (match, scoring team) to match `matches_ir`, where
+        # `current_team_score` is the scoring team's running tally, not the
+        # match's running goal count.
         return (
             goal_scorers.lazy()
             .sort("date", "minute", nulls_last=True)
             .with_columns(
                 goal_number=pl.int_range(1, pl.len() + 1).over(
-                    "date", "home_team", "away_team"
+                    "date", "home_team", "away_team", "team"
                 )
             )
             .select(
@@ -167,15 +170,34 @@ def goal_scorers_ir():
             )
         )
 
-
     goal_scorers_ir = _numbered_goals().collect()
     goal_scorers_ir
-    return
+    return (goal_scorers_ir,)
 
 
 @app.cell
-def goals_ir():
-    # Join `matches_ir` and `goal_scorers_ir`
+def goals_ir(goal_scorers_ir, matches_ir):
+    # `matches_ir` has one row per (match, moment); `goal_scorers_ir` one row per
+    # (match, goal). Both number the scoring team's goals with `current_team_score`,
+    # so match + scorer_team + current_team_score identifies a goal in each table.
+    # The `scorer_team IS NULL` rows of `matches_ir` are match kickoffs: they have no
+    # counterpart in `goal_scorers_ir`, and a full outer join keeps them.
+    goals_ir = matches_ir.join(
+        goal_scorers_ir,
+        on=[
+            "date",
+            "home_team",
+            "away_team",
+            "scorer_team",
+            "current_team_score",
+        ],
+        how="full",
+        coalesce=True,
+    ).sort(
+        "date", "home_team", "away_team", "scorer_team", "current_team_score"
+    )
+
+    goals_ir
     return
 
 
