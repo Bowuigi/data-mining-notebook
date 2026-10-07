@@ -173,6 +173,12 @@ def goal_scorers_ir():
     return
 
 
+@app.cell
+def goals_ir():
+    # Join `matches_ir` and `goal_scorers_ir`
+    return
+
+
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
@@ -203,16 +209,16 @@ def _():
             goal_scorers.date,
             goal_scorers.home_team,
             goal_scorers.away_team,
-            match_results.home_score,
-            match_results.away_score,
-            team as goal_scorer_team,
-            scorer as goal_scorer,
+            match_results.home_score as final_home_score,
+            match_results.away_score as final_away_score,
+            team as scorer_team,
+            scorer,
             minute as goal_minute,
             own_goal as goal_was_own_goal,
             penalty as goal_was_penalty,
-            country as played_in_country,
-            tournament as played_in_tournament,
-            city as played_in_city,
+            country,
+            tournament,
+            city,
             neutral as neutral_field
         from
             match_results
