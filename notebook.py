@@ -60,12 +60,22 @@ def ir_doc():
     **Tablas intermedias:**
     - `matches_ir`: Cada fila es un resultado del partido conforme va pasando.
       <br>Suma las siguientes columnas a `match_results`:
-      - `goal_scorer_team`: El que metió gol en ese momento. Si es `NULL`, es el inicio del partido (fila incluída para no borrar partidos 0-0 y para poder obtener con facilidad sólo los partidos si hacen falta). Si no, es un gol.
+      - `scorer_team`: El que metió gol en ese momento. Si es `NULL`, es el inicio del partido (fila incluída para no borrar partidos 0-0 y para poder obtener con facilidad sólo los partidos si hacen falta). Si no, es un gol.
       - `current_team_score`: Marcador de ese equipo hasta e incluyendo ese gol. Si es 0 (y por tanto `goal_scorer_team` es `NULL`), es el inicio del partido. Si no, es un gol.
 
         Se renombran las siguientes columnas de `match_results`:
       - `home_score` → `final_home_score`
       - `away_score` → `final_away_score`
+      - `neutral` → `neutral_field`
+    - `goal_scorers_ir`: Cada fila es un gol de un partido conforme va pasando.
+      <br>Suma las siguientes columnas a `goal_scorers`:
+      - `current_team_score`: Marcador de ese equipo hasta e incluyendo ese gol.
+
+        Se renombran las siguientes columnas de `goal_scorers`:
+      - `team` → `scorer_team`
+      - `minute` → `goal_minute`
+      - `own_goal` → `goal_was_own_goal`
+      - `penalty` → `goal_was_penalty`
     """)
     return
 
@@ -85,41 +95,38 @@ def matches_ir():
                 "date",
                 "home_team",
                 "away_team",
-                pl.col(f"{side}_team").alias("goal_scorer_team"),
+                pl.col(f"{side}_team").alias("scorer_team"),
                 pl.col("goal_number").alias("current_team_score"),
                 pl.col("home_score").alias("final_home_score"),
                 pl.col("away_score").alias("final_away_score"),
                 "tournament",
                 "city",
                 "country",
-                "neutral",
+                pl.col("neutral").alias("neutral_field"),
             )
         )
 
-
-    def _goalless_rows():
-        # One zero-th row per match, so 0-N and N-0 matches are kept without duplicates
-        return match_results.lazy().select(
-            "date",
-            "home_team",
-            "away_team",
-            pl.lit(None, dtype=pl.String).alias("goal_scorer_team"),
-            pl.lit(0, dtype=pl.Int64).alias("current_team_score"),
-            pl.col("home_score").alias("final_home_score"),
-            pl.col("away_score").alias("final_away_score"),
-            "tournament",
-            "city",
-            "country",
-            "neutral",
-        )
-
+    # One zero-th row per match, so 0-N and N-0 matches are kept without duplicates
+    _goalless_rows = match_results.lazy().select(
+        "date",
+        "home_team",
+        "away_team",
+        pl.lit(None, dtype=pl.String).alias("scorer_team"),
+        pl.lit(0, dtype=pl.Int64).alias("current_team_score"),
+        pl.col("home_score").alias("final_home_score"),
+        pl.col("away_score").alias("final_away_score"),
+        "tournament",
+        "city",
+        "country",
+        pl.col("neutral").alias("neutral_field"),
+    )
 
     matches_ir = (
         pl.concat(
             [
                 _scored_goals("home"),
                 _scored_goals("away"),
-                _goalless_rows(),
+                _goalless_rows,
             ],
             how="diagonal_relaxed",
         )
@@ -147,12 +154,12 @@ def goal_scorers_ir():
                 "date",
                 "home_team",
                 "away_team",
-                "goal_number",
-                "team",
+                pl.col("team").alias("scorer_team"),
+                pl.col("goal_number").alias("current_team_score"),
                 "scorer",
-                "minute",
-                "own_goal",
-                "penalty",
+                pl.col("minute").alias("goal_minute"),
+                pl.col("own_goal").alias("goal_was_own_goal"),
+                pl.col("penalty").alias("goal_was_penalty"),
             )
         )
 
