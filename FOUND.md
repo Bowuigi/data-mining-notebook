@@ -10,6 +10,8 @@ in order:
 3. **A human owner** of the notebook, who must arbitrate the cases where the data itself is
    wrong and no code change can fix it (§6).
 
+Both agents must use the /marimo-pair skill to connect to localhost:2718, which is where the notebook is hosted, in order to run queries against the data. Unless specified directly by a human, those agents MUST NOT modify the notebook.
+
 Everything needed to re-derive the numbers is here: the data location, the exact notebook
 logic being examined, the row counts, and the queries used. Nothing in this document depends
 on conversation history.
