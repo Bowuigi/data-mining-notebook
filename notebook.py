@@ -64,16 +64,16 @@ def _():
     Formalización técnica:
 
     - Para el objetivo descriptivo: La tarea es de **clustering**. (incompleto)
-    - Para el objetivo predictivo: La tarea es de **clasificación (supervisada)**. El resultado debe ser un modelo (evaluado apropiadamente) que pueda predecir si un equipo ganó, empató o perdió según un registro detallado sobre penales acertados. (incompleto?)
+    - Para el objetivo predictivo: La tarea es de **clasificación supervisada**. El resultado debe ser un modelo (evaluado apropiadamente) que pueda predecir si un equipo ganó, empató o perdió según un registro detallado sobre penales acertados. (incompleto?)
 
     # Fase 6: Selección del algoritmo y proceso analítico
 
     - Para el objetivo descriptivo:
       - k-Means: (falta justificar)
-      - ???: (falta elegir método y justificar, buscar en la documentación de scikit-learn)
+      - Gaussian Mixture: (falta justificar)
     - Para el objetivo predictivo:
       - XGBoost: El algoritmo es resistente al ruido y todo eso (falta terminar de justificar)
-      - ???: (falta elegir método y justificar, buscar en la documentación de scikit-learn)
+      - Nearest Neighbors: (falta justificar)
     """)
     return
 
