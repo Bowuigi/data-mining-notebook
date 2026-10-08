@@ -353,6 +353,21 @@ with app.setup:
             for c in ("home_team", "away_team", "team")
         ]
     )
+
+    # Nombres de jugador: se les sacan los diacríticos sin tocar las mayúsculas
+    # (`Sívori` -> `Sivori`). Es la única unificación que hace falta, y por eso NO
+    # hay mapa de alias: sobre 14.335 goleadores distintos, `normalize("NFKD")`
+    # resuelve por sí solo las 7 únicas colisiones, y todas son genuinamente la misma
+    # persona. Cualquier unificación más agresiva sería falsa: `Sándor Müller` y
+    # `Gerd Müller` son dos jugadores distintos, igual que el `Ronaldo` a secas
+    # (39 goles) y `Cristiano Ronaldo` (108).
+    goal_scorers = goal_scorers.with_columns(
+        pl.col("scorer")
+        .str.normalize("NFKD")
+        .str.replace_all(r"[^\x20-\x7E]", "")
+        .alias("scorer")
+    )
+
     match_results = match_results.with_columns(
         [pl.col(c).replace(TEAM_ALIASES) for c in ("home_team", "away_team")]
     )
@@ -852,6 +867,7 @@ def quirks_doc():
     - `city`: `Tananarive` → `Antananarivo` (10 filas).
     - Equipos: `Åland Islands` → `Åland`, `Saare County` → `Saaremaa`. `2011-06-29` estaba invertido (`Åland v Saaremaa`).
     - `goal_scorers`: 128 filas totalmente duplicadas. **No son un error**: hat-tricks de Lewandowski y Buksa, `Peter Sharne` 4 veces. No deduplicar.
+    - `goal_scorers`: 7 pares de goleadores diferían sólo en diacríticos (`Sívori`/`Sivori`, `Kéïta`/`Keita`, `Barthélemy`/`Barthelemy`, `Nguyễn Hồng Sơn`/`Nguyen Hong Son`, `Désir`/`Desir`, `Éder`/`Eder`, `Rivas`). Se pliegan con NFKD. **No hay mapa de alias**: sobre 14.335 goleadores ésos son los únicos 7 casos, y unificar más sería falso (`Gerd Müller` y `Sándor Müller` son dos jugadores distintos).
     - `goal_scorers`: 259 goles sin `minute`, entre `1960-10-16` y `1997-03-31` (no 1963-1980).
     - `goal_scorers`: 49 goles sin `scorer`, entre `1980-02-24` y `1980-09-23`.
     - `goal_scorers`: `minute = 122` (Friedenreich, `1919-05-29` Brasil-Uruguay). **No es un error**.
