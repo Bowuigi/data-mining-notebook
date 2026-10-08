@@ -23,13 +23,10 @@ app = marimo.App(app_title="DM Fútbol", sql_output="polars")
 
 with app.setup:
     ### Import libraries as required
-
     import marimo as mo
     import polars as pl
     import altair as alt
-
     import unidecode
-
     from corrections import CITY_ALIASES, COUNTRY_ALIASES, REGION, TEAM_ALIASES
 
     ### Load data
@@ -39,18 +36,59 @@ with app.setup:
             filename, null_values=["NA"], schema_overrides={"date": pl.Date}
         )
 
-    goal_scorers = _from_csv("data/Goal_Scorers.csv")
-    match_results = _from_csv("data/Match_Results.csv")
-    penalty_shootouts = _from_csv("data/Penalty_Shootouts.csv")
+    base_goal_scorers = _from_csv("data/Goal_Scorers.csv")
+    base_match_results = _from_csv("data/Match_Results.csv")
+    base_penalty_shootouts = _from_csv("data/Penalty_Shootouts.csv")
 
-    ### Correcciones sobre los datos base
-
-    # Clave natural de un partido y única clave de unión del notebook. Las
-    # correcciones de esta celda son las que la hacen única: son ellas las que
-    # desarman las 20 claves repetidas de `match_results`. No hay clave sintética
-    # aparte, así que la unicidad de `K` es un invariante que hay que mantener, no
-    # una propiedad que se pueda recuperar después.
+    # Clave primaria compuesta que identifica un partido
     K = ["date", "home_team", "away_team"]
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Nota: Se utilizó IA **sólo** para agilizar la escritura de código y la verificación de datos. En particular, el proceso KDD se llevó a cabo bajo dirección humana y "a pasitos", revisando todo 2 veces por las dudas. Aplicación: OpenCode; Modelo: Space Bunny Free (uno de los "incógnito", eventualmente revelarán cuál es y quién lo hizo).
+
+    # Fase 1: Objetivos de negocio
+
+    - Objetivo descriptivo:
+    - Objetivo predictivo:
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def quirks_doc():
+    mo.md(r"""
+    # Prerequisitos para la fase 2 pero técnicamente de la fase 3
+
+    Algunas cosas son exclusivamente de la fase 3, pero igual se documenta todo junto
+
+    Se encontraron cosas raras en los datos:
+
+    - En `match_results`:
+      - Hay 20 claves primarias compuestas (fecha, equipo local, equipo visitante) repetidas. 17 eran un segundo registro de un partido de torneo como si hubiesen sido amistosos (Far Eastern Championship Games 1923-1934, African Friendship Games 1960); se conserva el del torneo. Las otras 3 eran dos partidos distintos con la misma fecha: Singapur-Malasia 0-3 el 07/09/1973; Guyana-Barbados 2-0 el 21/10/1977 y el 0-0 del 22/10 repetía el del 26/10; Tahiti-Nueva Caledonia 2-1 y 1-2 compartían 17/02/1974, con el 1-2 movido a 18/02/1974 solo para desambiguar.
+      - Uruguay-Bolivia el 27/06/2024 figura 4-0 y `goal_scorers` registra 5 goles (que es correcto). Se reconcilia automáticamente al unir las tablas.
+      - `country` tiene nombres obsoletos.  Se agregan `normalized_country` (sucesor único) y `region` (región geográfica actual). Los paises con varios sucesores (URSS, Yugoslavia, Checoslovaquia, Serbia y Montenegro, Zanzibar) conservan el nombre histórico.
+      - `city` tenía ciudades que estaban repetidas pero escritas distinto. Se usaron aliases para corregirlas.
+      - Algunos equipos tenían nombres obsoletos. Se utilizaron aliases para su corrección.
+    - En `goal_scorers`:
+      - Varios pares de goleadores diferían sólo en caracteres no-ASCII. Se unifican mediante transliteración.
+      - Hay 259 goles sin `minute`, entre el 16/10/1960 y el 31/03/1997.
+      - Hay 49 goles sin `scorer`, entre el 24/02/1980 y el 23/09/1980.
+    - En `penalty_shootouts`:
+      - Hay 37 rondas de penales con marcador no empatado. Es normal (aunque inesperado) por las reglas del fútbol de ese momento.
+      - `first_shooter` es nulo en más de la mitad de los partidos.
+      - Saare County / Saaremaa vs Åland Islands / Åland el 29/06/2011 es un desempate sin partido (ni fila en `match_results`). Aparte de este caso especial, la fuente está mal (ganó Åland, que figura de visitante). Se descarta la fila.
+    """)
+    return
+
+
+@app.cell
+def _():
+    goal_scorers = base_goal_scorers
+    match_results = base_match_results
+    penalty_shootouts = base_penalty_shootouts
 
     goal_scorers = goal_scorers.with_columns(
         [
@@ -59,21 +97,14 @@ with app.setup:
         ]
     )
 
-    # Se convierten los nombres de jugador a ASCII.
-    #
-    # NFKD por sí solo no alcanza: 214 goleadores usan letras que no se descomponen
-    # (ø, ł, đ, ß, æ, þ, ð, ı, ə). La versión anterior las borraba con
-    # `str.replace_all(r"[^\x20-\x7E]", "")`, que mutilaba el nombre
-    # (`Søren Larsen` -> `Sren Larsen`, `Ødegaard` -> `degaard`).
-    # `unidecode` translitera esas letras y quita los diacríticos, y ya devuelve
-    # ASCII puro, así que no hace falta NFKD ni `unicodedata` aquí.
     goal_scorers = goal_scorers.with_columns(
+        # Transliterate.
         pl.col("scorer")
         .map_elements(unidecode.unidecode, return_dtype=pl.String)
         .alias("scorer")
     )
 
-    # Aplicar aliases
+    # Apply aliases
     match_results = match_results.with_columns(
         [pl.col(c).replace(TEAM_ALIASES) for c in ("home_team", "away_team")]
     )
@@ -92,10 +123,7 @@ with app.setup:
         pl.col("normalized_country").replace(REGION).alias("region")
     )
 
-    # `2011-06-29 Saaremaa v Åland` es un desempate sin partido de 90 minutos: no
-    # está en `match_results` y no hay marcador al que pegarle. El source lo
-    # además tiene invertido (ganó Åland, que figura como visitante). Se descarta
-    # acá, antes de que nada dependa de él, en vez de inventarle un partido.
+    # Delete `2011-06-29 Saaremaa v Åland`
     penalty_shootouts = penalty_shootouts.filter(
         ~(
             (pl.col("date") == pl.date(2011, 6, 29))
@@ -103,9 +131,7 @@ with app.setup:
         )
     )
 
-    # 17 claves duplicadas por un segundo registro `Friendly` de un partido de torneo
-    # (Far Eastern Championship Games 1923-1934, African Friendship Games 1960).
-    # Se conserva el registro del torneo.
+    # Duplicate friendly-tournament matches. Friendly duplicates removed
     _duplicated_by_tournament = (
         match_results.filter(pl.col("tournament") != "Friendly")
         .select(K)
@@ -166,19 +192,7 @@ with app.setup:
             & (pl.col("city") == "Georgetown")
         )
     )
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    Nota: Se utilizó IA **sólo** para agilizar la escritura de código y la verificación de datos. En particular, el proceso KDD se llevó a cabo bajo dirección humana y "a pasitos", revisando todo 2 veces por las dudas. Aplicación: OpenCode; Modelo: Space Bunny Free (uno de los "incógnito", eventualmente revelarán cuál es y quién lo hizo).
-
-    # Fase 1: Objetivos de negocio
-
-    - Objetivo descriptivo:
-    - Objetivo predictivo:
-    """)
-    return
+    return goal_scorers, match_results, penalty_shootouts
 
 
 @app.cell(hide_code=True)
@@ -239,7 +253,7 @@ def ir_doc():
 
 
 @app.cell
-def goal_events():
+def goal_events(goal_scorers, match_results):
     # Una fila por gol real. El orden dentro de un partido es el del source data, y
     # `goal_no` es la posición de secuencia autoritativa: nada aguas abajo la recalcula.
     # Las filas repetidas de `goal_scorers` son hat-tricks y goles repetidos de un
@@ -287,7 +301,7 @@ def goal_events():
 
 
 @app.cell
-def shootout_events():
+def shootout_events(match_results, penalty_shootouts):
     # Una fila por shootout. Las 643 caen en un partido de `match_results`: el
     # desempate sin partido de 90 minutos ya se descartó en la celda de base, así que
     # acá la unión es total y no hace falta_left_ ni anti-join.
@@ -309,7 +323,7 @@ def shootout_events():
 
 
 @app.cell
-def matches(goal_events, shootout_events):
+def matches(goal_events, match_results, shootout_events):
     # Una fila por partido. El marcador se reconcilia acá, una sola vez: si el partido
     # tiene goles registrados, el marcador pasa a ser lo que dicen las filas de gol.
     # Los goles sólo suman información, así que un partido con pocos goleadores nunca
@@ -509,30 +523,22 @@ def _():
 
 
 @app.cell(hide_code=True)
-def quirks_doc():
+def _():
     mo.md(r"""
-    Cosas raras encontradas en las fuentes:
-
-    - En `match_results`:
-      - Hay 20 claves primarias compuestas (fecha, equipo local, equipo visitante) repetidas. 17 eran un segundo registro de un partido de torneo como si hubiesen sido amistosos (Far Eastern Championship Games 1923-1934, African Friendship Games 1960); se conserva el del torneo. Las otras 3 eran dos partidos distintos con la misma fecha: Singapur-Malasia 0-3 el 07/09/1973; Guyana-Barbados 2-0 el 21/10/1977 y el 0-0 del 22/10 repetía el del 26/10; Tahiti-Nueva Caledonia 2-1 y 1-2 compartían 17/02/1974, con el 1-2 movido a 18/02/1974 solo para desambiguar.
-      - Uruguay-Bolivia el 27/06/2024 figura 4-0 y `goal_scorers` registra 5 goles (que es correcto). Se reconcilia automáticamente al unir las tablas.
-      - `country` tiene nombres obsoletos.  Se agregan `normalized_country` (sucesor único) y `region` (región geográfica actual). Los paises con varios sucesores (URSS, Yugoslavia, Checoslovaquia, Serbia y Montenegro, Zanzibar) conservan el nombre histórico.
-      - `city` tenía ciudades que estaban repetidas pero escritas distinto. Se usaron aliases para corregirlas.
-      - Algunos equipos tenían nombres obsoletos. Se utilizaron aliases para su corrección.
-    - En `goal_scorers`:
-      - Varios pares de goleadores diferían sólo en caracteres no-ASCII. Se unifican mediante transliteración.
-      - Hay 259 goles sin `minute`, entre el 16/10/1960 y el 31/03/1997.
-      - Hay 49 goles sin `scorer`, entre el 24/02/1980 y el 23/09/1980.
-    - En `penalty_shootouts`:
-      - Hay 37 rondas de penales con marcador no empatado. Es normal (aunque inesperado) por las reglas del fútbol de ese momento.
-      - `first_shooter` es nulo en más de la mitad de los partidos.
-      - Saare County / Saaremaa vs Åland Islands / Åland el 29/06/2011 es un desempate sin partido (ni fila en `match_results`). Aparte de este caso especial, la fuente está mal (ganó Åland, que figura de visitante). Se descarta la fila.
+    # Pruebas que verifican la consistencia de los datos
     """)
     return
 
 
 @app.cell(hide_code=True)
-def invariants(goal_events, goals_ir, matches, shootout_events):
+def invariants(
+    goal_events,
+    goal_scorers,
+    goals_ir,
+    match_results,
+    matches,
+    shootout_events,
+):
     # Chequeos permanentes. Cada uno corresponde a un hallazgo que alguien tuvo que
     # descubrir a mano; dejarlos escritos es la forma más barata de que la próxima
     # pasada no vuelva a tropezar con lo mismo.
