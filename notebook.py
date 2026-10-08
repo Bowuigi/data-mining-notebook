@@ -188,7 +188,7 @@ def _(K, base_goal_scorers, base_match_results, base_penalty_shootouts):
             & (pl.col("city") == "Georgetown")
         )
     )
-    return goal_scorers, match_results, penalty_shootouts
+    return goal_scorers, match_results
 
 
 @app.cell(hide_code=True)
@@ -218,7 +218,7 @@ def ir_doc():
 
 
 @app.cell
-def goal_scorers_ir(K, goal_scorers, match_results):
+def goal_scorers_ir(K, goal_scorers):
     goal_scorers_ir = (
         goal_scorers.lazy()
         .sort("date", "minute", nulls_last=True)
@@ -248,12 +248,62 @@ def goal_scorers_ir(K, goal_scorers, match_results):
     )
 
     goal_scorers_ir
-    return (goal_scorers_ir,)
+    return
 
 
 @app.cell
-def _():
-    pass
+def matches_ir(match_results):
+    def _scored_goals(side: str):
+        return (
+          match_results.lazy()
+          .with_columns(
+            benefitting_team_score=pl.int_ranges(1, pl.col(f"{side}_score") + 1),
+          )
+          .explode("benefitting_team_score", empty_as_null=False)
+          .filter(pl.col("benefitting_team_score").is_not_null())
+          .select(
+            "date",
+            "home_team",
+            "away_team",
+            pl.col(f"{side}_team").alias("benefitting_team"),
+            "benefitting_team_score",
+            pl.col("home_score").alias("final_home_score"),
+            pl.col("away_score").alias("final_away_score"),
+            "tournament",
+            "city",
+            "country",
+            pl.col("neutral").alias("neutral_field")
+          )
+        )
+    # One zero-th row per match, so 0-N and N-0 matches are kept without duplicates
+    _goalless_rows = match_results.lazy().select(
+        "date",
+        "home_team",
+        "away_team",
+        pl.lit(None, dtype=pl.String).alias("benefitting_team"),
+        pl.lit(0, dtype=pl.Int64).alias("benefitting_team_score"),
+        pl.col("home_score").alias("final_home_score"),
+        pl.col("away_score").alias("final_away_score"),
+        "tournament",
+        "city",
+        "country",
+        pl.col("neutral").alias("neutral_field"),
+    )
+
+    matches_ir = (
+        pl.concat(
+            [
+                _scored_goals("home"),
+                _scored_goals("away"),
+                _goalless_rows,
+            ],
+            how="diagonal_relaxed",
+        )
+        .sort("date", "benefitting_team", "benefitting_team_score")
+        .collect()
+    )
+    matches_ir
+    return
 
 
 @app.cell(hide_code=True)
