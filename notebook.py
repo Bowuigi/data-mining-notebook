@@ -8,6 +8,7 @@
 #     "python-lsp-ruff==2.3.4",
 #     "ruff==0.16.9",
 #     "sqlglot==30.19.0",
+#     "unidecode==1.4.0",
 #     "vegafusion",
 #     "vl-convert-python",
 #     "websockets==17.1",
@@ -26,6 +27,8 @@ with app.setup:
     import marimo as mo
     import polars as pl
     import altair as alt
+
+    import unidecode
 
     from corrections import (CITY_ALIASES, COUNTRY_ALIASES, REGION, TEAM_ALIASES)
 
@@ -53,11 +56,17 @@ with app.setup:
         ]
     )
 
-    # Se convierten los nombres de jugador a ~ASCII
+    # Se convierten los nombres de jugador a ASCII.
+    #
+    # NFKD por sí solo no alcanza: 214 goleadores usan letras que no se descomponen
+    # (ø, ł, đ, ß, æ, þ, ð, ı, ə). La versión anterior las borraba con
+    # `str.replace_all(r"[^\x20-\x7E]", "")`, que mutilaba el nombre
+    # (`Søren Larsen` -> `Sren Larsen`, `Ødegaard` -> `degaard`).
+    # `unidecode` translitera esas letras y quita los diacríticos, y ya devuelve
+    # ASCII puro, así que no hace falta NFKD ni `unicodedata` aquí.
     goal_scorers = goal_scorers.with_columns(
         pl.col("scorer")
-        .str.normalize("NFKD")
-        .str.replace_all(r"[^\x20-\x7E]", "")
+        .map_elements(unidecode.unidecode, return_dtype=pl.String)
         .alias("scorer")
     )
 
@@ -557,10 +566,11 @@ def quirks_doc():
     - `match_results`: 20 claves `(date, home_team, away_team)` repetidas. 17 eran un segundo registro `Friendly` de un partido de torneo (Far Eastern Championship Games 1923-1934, African Friendship Games 1960); se conserva el del torneo. Las otras 3 eran dos partidos distintos con la misma fecha: Singapur-Malasia 0-3 → `1973-09-07`; Guyana-Barbados 2-0 (Linden) → `1977-10-21` y el 0-0 (Georgetown) de `10-22` repetía el de `10-26`; Tahiti-Nueva Caledonia 2-1 y 1-2 compartían `1974-02-17`, con el 1-2 movido a `1974-02-18` **sin confirmar contra una segunda fuente**.
     - `match_results`: Uruguay-Bolivia `2024-06-27` figura 4-0 y `goal_scorers` registra 5 goles. El source queda 4-0; `matches` y `goals_ir` lo reconcilian a 5-0.
     - `match_results`: `country` con nombres obsoletos. Hay `normalized_country` (sucesor único) y `region` (geografía actual). Los de varios sucesores (`Soviet Union`, `Yugoslavia`, `Czechoslovakia`, `Serbia and Montenegro`, `Zanzibar`) conservan el nombre histórico.
-    - `city`: `Tananarive` → `Antananarivo` (10 filas).
+    - `city`: 4 aliases, no un pliegue a ASCII. `Tananarive` → `Antananarivo` (10 filas) y 3 pares que sólo difieren en diacríticos (`Bogota`/`Bogotá`, `Gijon`/`Gijón`, `Valparaiso`/`Valparaíso`, 2+1+1 filas). **No hay más**: NFKD sobre las 2.064 ciudades da 5 colisiones y 2 son ciudades distintas -- `San Jose` (United States, 11 filas) vs `San José` (Costa Rica, 272) y `Pula` (Croatia, 4) vs `Púla` (Cyprus, 1). Pliegar `city` las fusionaría.
     - Equipos: `Åland Islands` → `Åland`, `Saare County` → `Saaremaa`. `2011-06-29` estaba invertido (`Åland v Saaremaa`).
     - `goal_scorers`: 128 filas totalmente duplicadas. **No son un error**: hat-tricks de Lewandowski y Buksa, `Peter Sharne` 4 veces. No deduplicar.
-    - `goal_scorers`: 7 pares de goleadores diferían sólo en diacríticos (`Sívori`/`Sivori`, `Kéïta`/`Keita`, `Barthélemy`/`Barthelemy`, `Nguyễn Hồng Sơn`/`Nguyen Hong Son`, `Désir`/`Desir`, `Éder`/`Eder`, `Rivas`). Se pliegan con NFKD. **No hay mapa de alias**: sobre 14.335 goleadores ésos son los únicos 7 casos, y unificar más sería falso (`Gerd Müller` y `Sándor Müller` son dos jugadores distintos).
+    - `goal_scorers`: 8 pares de goleadores diferían sólo en diacríticos (`Sívori`/`Sivori`, `Kéïta`/`Keita`, `Barthélemy`/`Barthelemy`, `Nguyễn Hồng Sơn`/`Nguyen Hong Son`, `Désir`/`Desir`, `Éder`/`Eder`, `Rivas`, `Þórðarson`/`Thordarson`). Se pliegan transliterando con `unidecode`. **No hay mapa de alias**: sobre 14.335 goleadores ésos son los únicos 8 casos, y unificar más sería falso (`Gerd Müller` y `Sándor Müller` son dos jugadores distintos).
+    - `goal_scorers`: el nombre original con diacríticos se pierde. `scorer` queda en ASCII; sobre 14.335 goleadores, 214 cambia al transliterar y 0 quedan con caracteres no-ASCII.
     - `goal_scorers`: 259 goles sin `minute`, entre `1960-10-16` y `1997-03-31` (no 1963-1980).
     - `goal_scorers`: 49 goles sin `scorer`, entre `1980-02-24` y `1980-09-23`.
     - `goal_scorers`: `minute = 122` (Friedenreich, `1919-05-29` Brasil-Uruguay). **No es un error**.
@@ -663,6 +673,34 @@ def invariants(goal_events, goals_ir, matches, matches_keyed, shootout_events):
     # --- geografía ---
     assert matches_keyed["normalized_country"].null_count() == 0
     assert matches_keyed["region"].null_count() == 0
+
+    # `city` se unifica por alias, no por pliegue: las dos colisiones que NFKD
+    # produciría son ciudades distintas y no deben fusionarse.
+    _cities = match_results.with_columns(
+        pl.col("city").replace(CITY_ALIASES).alias("c")
+    )["c"].unique()
+    # los alias se aplicaron: los valores de entrada ya no están
+    assert not _cities.is_in(CITY_ALIASES.keys()).any()
+    # y las ciudades homónimas de países distintos siguen separadas
+    assert {"San Jose", "San José", "Pula", "Púla"} <= set(_cities.to_list())
+    # las 3 parejas homónimas de país distinto conservan su fila original
+    assert (
+        match_results.filter(pl.col("city").is_in(["San Jose", "Pula"])).height
+        == 11 + 4
+    ), "San Jose (US) y Pula (Croacia) deben conservar sus filas"
+    assert (
+        match_results.filter(
+            pl.col("city").is_in(["Bogotá", "Gijón", "Valparaíso"])
+        ).height
+        == 88 + 14 + 12  # 86+2, 13+1, 11+1: el alias absorbe la grafía sin tilde
+    ), "los aliases de ciudad no se aplicaron"
+
+    # `scorer` queda en ASCII y transliterado, no mutilado.
+    assert (
+        goal_scorers["scorer"].drop_nulls().str.contains(r"[^\x20-\x7E]").sum() == 0
+    )
+    assert goal_scorers.filter(pl.col("scorer") == "Teitur Thordarson").height == 2
+    assert goal_scorers.filter(pl.col("scorer") == "Omar Sivori").height == 8
     assert (
         matches_keyed.filter(pl.col("normalized_country") == "Soviet Union")[
             "region"

@@ -2,7 +2,19 @@
 
 # Se usan los nombres oficiales actuales de algunos equipos y ciudades
 TEAM_ALIASES = {"Åland Islands": "Åland", "Saare County": "Saaremaa"}
-CITY_ALIASES = {"Tananarive": "Antananarivo"}
+
+# `city` no se pliega a ASCII: hacerlo uniría ciudades distintas que sólo
+# coinciden al quitar los diacríticos. Estas son las 5 colisiones que produce
+# NFKD sobre las 2.064 ciudades, y sólo 3 son la misma ciudad:
+#   - `San Jose` (United States) vs `San José` (Costa Rica): distintas.
+#   - `Pula` (Croatia) vs `Púla` (Cyprus): distintas.
+# Las otras 3 se unifican con el nombre acentuado, que es el oficial.
+CITY_ALIASES = {
+    "Tananarive": "Antananarivo",
+    "Bogota": "Bogotá",
+    "Gijon": "Gijón",
+    "Valparaiso": "Valparaíso",
+}
 
 # Países con un sucesor único y sin ambigüedad.
 COUNTRY_ALIASES = {
