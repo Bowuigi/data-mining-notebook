@@ -53,27 +53,8 @@ def _():
 
     - Objetivo descriptivo: Un medio de comunicación quiere hacer una nota periodística que investigue si diversas características destacadas (según opinión popular) y eventos de partidos de fútbol están relacionados con el nivel de estrés causado al hincha promedio por cada partido. Como primer acercamiento, se busca reducir el número de partidos a analizar maximizando la representatividad, para luego hacer encuestas sobre el estrés percibido.
     - Objetivo predictivo: Un club deportivo quiere completar datos históricos de partidos internacionales (no cubiertos en estos _datasets_ actuales) para enviárselos a la RSSSF y necesita un proceso de verificación de consistencia para comparar diversas fuentes. Cada una de estas fuentes contiene un registro detallado de penales acertados (durante y post-juego) y el resultado final del partido (de tablas de clasificación y puntajes particulares), pero el resto está incompleto.
-    """)
-    return
 
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    # Fase 5: Selección de la tarea de minería de datos
-
-    Formalización técnica:
-
-    - Para el objetivo descriptivo: La tarea es de **clustering**. (incompleto)
-    - Para el objetivo predictivo: La tarea es de **clasificación supervisada**. El resultado debe ser un modelo (evaluado apropiadamente) que pueda predecir si un equipo ganó, empató o perdió según un registro detallado sobre penales acertados. (incompleto?)
-
-    # Fase 6: Selección del algoritmo y proceso analítico
-
-    - Para el objetivo descriptivo:
-      - k-Means: (falta justificar)
-      - Gaussian Mixture: (falta justificar)
-    - Para el objetivo predictivo:
-      - XGBoost: El algoritmo es resistente al ruido y todo eso (falta terminar de justificar)
-      - Nearest Neighbors: (falta justificar)
+    # Fase 2: Selección y creación del target dataset
     """)
     return
 
@@ -119,7 +100,7 @@ def _():
     )
 
     goal_scorers = goal_scorers.with_columns(
-        # Transliterate.
+        # Transliterate
         pl.col("scorer")
         .map_elements(unidecode.unidecode, return_dtype=pl.String)
         .alias("scorer")
@@ -533,6 +514,28 @@ def goals_ir(goal_events, matches):
 
     goals_ir
     return (goals_ir,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    # Fase 5: Selección de la tarea de minería de datos
+
+    Formalización técnica:
+
+    - Para el objetivo descriptivo: La tarea es de **clustering**. (incompleto)
+    - Para el objetivo predictivo: La tarea es de **clasificación supervisada**. El resultado debe ser un modelo (evaluado apropiadamente) que pueda predecir si un equipo ganó, empató o perdió según un registro detallado sobre penales acertados. (incompleto?)
+
+    # Fase 6: Selección del algoritmo y proceso analítico
+
+    - Para el objetivo descriptivo:
+      - k-Means: (falta justificar)
+      - Gaussian Mixture: (falta justificar)
+    - Para el objetivo predictivo:
+      - XGBoost: El algoritmo es resistente al ruido y todo eso (falta terminar de justificar)
+      - Nearest Neighbors: (falta justificar)
+    """)
+    return
 
 
 @app.cell(hide_code=True)
