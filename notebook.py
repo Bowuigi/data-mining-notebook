@@ -45,8 +45,11 @@ with app.setup:
 
     ### Correcciones sobre los datos base
 
-    # Clave natural de un partido. Tras las correcciones de esta celda es única, y
-    # `match_id` pasa a ser la única clave de unión del notebook.
+    # Clave natural de un partido y única clave de unión del notebook. Las
+    # correcciones de esta celda son las que la hacen única: son ellas las que
+    # desarman las 20 claves repetidas de `match_results`. No hay clave sintética
+    # aparte, así que la unicidad de `K` es un invariante que hay que mantener, no
+    # una propiedad que se pueda recuperar después.
     K = ["date", "home_team", "away_team"]
 
     goal_scorers = goal_scorers.with_columns(
@@ -195,14 +198,14 @@ def _():
 def ir_doc():
     mo.md(r"""
     **Tablas intermedias:**
-    - `matches_keyed`: Una fila por partido.
-      <br>Suma las siguientes columnas a `match_results`:
-      - `match_id`: Clave entera y única del partido. Es la clave de unión de todo el notebook; `(date, home_team, away_team)` queda sólo como payload.
+    - `match_results` (corregida): Una fila por partido, con `(date, home_team, away_team)`
+      como clave única de unión de todo el notebook. Es el punto de partida de todo lo
+      demás, así que no es una tabla intermedia: las columnas que le suman las
+      correcciones de la celda de base son
       - `normalized_country`: País actual cuando hay un sucesor único y no ambiguo; si no, el nombre histórico tal cual.
       - `region`: Geografía actual, siempre bajo un nombre actual (`USSR` → `Europe`, `Zanzibar` → `Africa`).
     - `goal_events`: Una fila por gol de `goal_scorers`.
       <br>Suma las siguientes columnas:
-      - `match_id`: Partido del gol.
       - `goal_no`: Enésimo gol de ese equipo en ese partido, según el orden del source data.
       - `has_incomplete_minute_data`: `True` si a algún gol de ese partido le falta `minute`.
 
@@ -211,9 +214,10 @@ def ir_doc():
       - `minute` → `goal_minute`
       - `own_goal` → `goal_was_own_goal`
       - `penalty` → `goal_was_penalty`
-    - `shootout_events`: Una fila por partido de `penalty_shootouts`, unida a su `match_id`.
-      <br>Suma las siguientes columnas:
-      - `match_id`: Partido del shootout. `NULL` en el único desempate sin partido de 90 minutos.
+    - `shootout_events`: Una fila por partido de `penalty_shootouts`.
+      <br>Es `penalty_shootouts` renombrado. 643 de sus 644 filas caen en un partido de
+      `match_results`; la restante es `2011-06-29 Åland v Saaremaa`, un desempate sin
+      partido de 90 minutos, y no se une con ninguna.
 
         Se renombran las siguientes columnas de `penalty_shootouts`:
       - `winner` → `shootout_winner`
@@ -229,7 +233,7 @@ def ir_doc():
       - `goal_no`, `has_incomplete_minute_data`: De `goal_events`.
       - `current_team_score`: Marcador de ese equipo hasta e incluyendo ese gol. Si `scorer_team` es `NULL`, es el inicio de un partido 0-0 sin goleadores.
       - `has_goal_detail`: `False` si la fila se derivó del marcador y no de `goal_scorers`.
-      - `shootout_winner`, `penalty_first_shooter`, `won_by`: Del partido, por `match_id`.
+      - `shootout_winner`, `penalty_first_shooter`, `won_by`: Del partido, por la clave `(date, home_team, away_team)`.
 
         Se renombran las siguientes columnas de `matches`:
       - `home_score` → `final_home_score`
@@ -240,21 +244,7 @@ def ir_doc():
 
 
 @app.cell
-def matches_keyed():
-    # Una fila por partido, con una clave entera y única. A partir de acá todas las
-    # uniones son por `match_id`, y como la clave es única ninguna unión puede
-    # multiplicar filas.
-    matches_keyed = match_results.sort(*K).with_row_index("match_id")
-
-    assert matches_keyed.select(K).is_duplicated().sum() == 0
-    assert matches_keyed["match_id"].n_unique() == matches_keyed.height
-
-    matches_keyed
-    return (matches_keyed,)
-
-
-@app.cell
-def goal_events(matches_keyed):
+def goal_events():
     # Una fila por gol real. El orden dentro de un partido es el del source data, y
     # `goal_no` es la posición de secuencia autoritativa: nada aguas abajo la recalcula.
     # Las filas repetidas de `goal_scorers` son hat-tricks y goles repetidos de un
@@ -274,9 +264,8 @@ def goal_events(matches_keyed):
                 "penalty": "goal_was_penalty",
             }
         )
-        .join(matches_keyed.lazy().select("match_id", *K), on=K, how="left")
         .select(
-            "match_id",
+            *K,
             "scorer_team",
             "goal_no",
             "scorer",
@@ -288,12 +277,11 @@ def goal_events(matches_keyed):
         .collect()
     )
 
-    assert goal_events.filter(pl.col("match_id").is_null()).height == 0
+    # Todo gol tiene que pertenecer a un partido de `match_results`. Sin clave
+    # sintética esto ya no se ve como un NULL: hay que buscarlo explícitamente.
+    assert goal_events.join(match_results.select(K), on=K, how="anti").height == 0
     assert (
-        goal_events.select("match_id", "scorer_team", "goal_no")
-        .is_duplicated()
-        .sum()
-        == 0
+        goal_events.select(*K, "scorer_team", "goal_no").is_duplicated().sum() == 0
     )
 
     goal_events
@@ -301,32 +289,26 @@ def goal_events(matches_keyed):
 
 
 @app.cell
-def shootout_events(matches_keyed):
-    # Una fila por shootout, unida a su partido. 643 de 644 caen en un `match_id`; la
+def shootout_events():
+    # Una fila por shootout. 643 de 644 caen en un partido de `match_results`; la
     # restante es `2011-06-29 Åland v Saaremaa`, un desempate sin partido de 90
-    # minutos, y queda con `match_id = NULL` a propósito.
-    shootout_events = (
-        penalty_shootouts.lazy()
-        .join(matches_keyed.lazy().select("match_id", *K), on=K, how="left")
-        .rename(
-            {
-                "winner": "shootout_winner",
-                "first_shooter": "penalty_first_shooter",
-            }
-        )
-        .select("match_id", *K, "shootout_winner", "penalty_first_shooter")
-        .collect()
-    )
+    # minutos, y se la deja sin unir a propósito.
+    shootout_events = penalty_shootouts.rename(
+        {
+            "winner": "shootout_winner",
+            "first_shooter": "penalty_first_shooter",
+        }
+    ).select(*K, "shootout_winner", "penalty_first_shooter")
 
     assert shootout_events.height == penalty_shootouts.height
-    assert shootout_events.filter(pl.col("match_id").is_null()).height == 1
+    assert shootout_events.join(match_results.select(K), on=K, how="anti").height == 1
 
     shootout_events
     return (shootout_events,)
 
 
 @app.cell
-def matches(goal_events, matches_keyed, shootout_events):
+def matches(goal_events, shootout_events):
     # Una fila por partido. El marcador se reconcilia acá, una sola vez: si el partido
     # tiene goles registrados, el marcador pasa a ser lo que dicen las filas de gol.
     # Los goles sólo suman información, así que un partido con pocos goleadores nunca
@@ -336,11 +318,7 @@ def matches(goal_events, matches_keyed, shootout_events):
     # (4-0 registrado, 5 goles) y queda reparado acá, sin fix a mano.
     _goals_counted = (
         goal_events.lazy()
-        .join(
-            matches_keyed.lazy().select("match_id", "home_team", "away_team"),
-            on="match_id",
-        )
-        .group_by("match_id", "home_team", "away_team")
+        .group_by(*K)
         .agg(
             pl.col("scorer_team")
             .filter(pl.col("scorer_team") == pl.col("home_team"))
@@ -357,10 +335,7 @@ def matches(goal_events, matches_keyed, shootout_events):
     )
 
     _MATCH_COLUMNS = [
-        "match_id",
-        "date",
-        "home_team",
-        "away_team",
+        *K,
         "home_score",
         "away_score",
         "tournament",
@@ -372,8 +347,8 @@ def matches(goal_events, matches_keyed, shootout_events):
     ]
 
     matches = (
-        matches_keyed.select(*_MATCH_COLUMNS)
-        .join(_goals_counted, on="match_id", how="left")
+        match_results.select(*_MATCH_COLUMNS)
+        .join(_goals_counted, on=K, how="left")
         .with_columns(
             pl.col("_goals_from_rows").is_not_null().alias("has_goal_detail")
         )
@@ -388,10 +363,8 @@ def matches(goal_events, matches_keyed, shootout_events):
             .alias("away_score"),
         )
         .join(
-            shootout_events.select(
-                "match_id", "shootout_winner", "penalty_first_shooter"
-            ),
-            on="match_id",
+            shootout_events.select(*K, "shootout_winner", "penalty_first_shooter"),
+            on=K,
             how="left",
         )
         .with_columns(
@@ -424,12 +397,10 @@ def matches(goal_events, matches_keyed, shootout_events):
     )
 
     # El desempate sin partido de 90 minutos vive sólo acá: no tiene marcador, ni
-    # torneo, ni filas de goles.
-    _tiebreaks = shootout_events.filter(pl.col("match_id").is_null()).select(
-        pl.lit(None, dtype=pl.UInt32).alias("match_id"),
-        "date",
-        "home_team",
-        "away_team",
+    # torneo, ni filas de goles. Es la única fila de `shootout_events` cuya clave no
+    # aparece en `match_results`, así que se localiza con un anti-join.
+    _tiebreaks = shootout_events.join(match_results.select(K), on=K, how="anti").select(
+        *K,
         pl.lit(None, dtype=pl.Int64).alias("home_score"),
         pl.lit(None, dtype=pl.Int64).alias("away_score"),
         pl.lit(None, dtype=pl.String).alias("tournament"),
@@ -464,7 +435,7 @@ def goals_ir(goal_events, matches):
             matches.filter(~pl.col("has_goal_detail"))
             .lazy()
             .select(
-                "match_id",
+                *K,
                 pl.col(f"{side}_team").alias("scorer_team"),
                 pl.col(f"{side}_score")
                 .cast(pl.UInt32)
@@ -497,7 +468,7 @@ def goals_ir(goal_events, matches):
         )
         .lazy()
         .select(
-            "match_id",
+            *K,
             pl.lit(None, dtype=pl.String).alias("scorer_team"),
             pl.lit(None, dtype=pl.UInt32).alias("goal_no"),
             pl.lit(0, dtype=pl.UInt32).alias("current_team_score"),
@@ -524,10 +495,7 @@ def goals_ir(goal_events, matches):
         )
         .join(
             matches.lazy().select(
-                "match_id",
-                "date",
-                "home_team",
-                "away_team",
+                *K,
                 pl.col("home_score").cast(pl.Int64).alias("final_home_score"),
                 pl.col("away_score").cast(pl.Int64).alias("final_away_score"),
                 "tournament",
@@ -540,10 +508,10 @@ def goals_ir(goal_events, matches):
                 "penalty_first_shooter",
                 "won_by",
             ),
-            on="match_id",
+            on=K,
             how="left",
         )
-        .sort("match_id", "scorer_team", "goal_no", nulls_last=True)
+        .sort(*K, "scorer_team", "goal_no", nulls_last=True)
         .collect()
     )
 
@@ -577,30 +545,24 @@ def quirks_doc():
     - `goal_scorers`: 163 goles de tiempo extra con su minuto real. No están doblados a 45/90.
     - `penalty_shootouts`: 37 con marcador no empatado. Son segundos partidos de ida y vuelta decididos por el global (33/37 con el partido de vuelta a ≤120 días y global empatado). **No borrarlos**, no recalcular `winner`.
     - `penalty_shootouts`: `first_shooter` NULL en 414 de 644 (64%).
-    - `penalty_shootouts`: `2011-06-29 Åland v Saaremaa` es un desempate sin partido de 90 minutos. No tiene `match_id` ni filas en `goals_ir`, y tampoco se le inventa un marcador.
+    - `penalty_shootouts`: `2011-06-29 Åland v Saaremaa` es un desempate sin partido de 90 minutos. No aparece en `match_results`, no tiene filas en `goals_ir`, y tampoco se le inventa un marcador.
     """)
     return
 
 
 @app.cell
-def invariants(goal_events, goals_ir, matches, matches_keyed, shootout_events):
+def invariants(goal_events, goals_ir, matches, shootout_events):
     # Chequeos permanentes. Cada uno corresponde a un hallazgo que alguien tuvo que
     # descubrir a mano; dejarlos escritos es la forma más barata de que la próxima
     # pasada no vuelva a tropezar con lo mismo.
 
     # --- clave y grano ---
-    assert matches_keyed["match_id"].n_unique() == matches_keyed.height
-    assert matches_keyed.select(K).is_duplicated().sum() == 0
-    assert goal_events.filter(pl.col("match_id").is_null()).height == 0
-    assert (
-        goal_events.select("match_id", "scorer_team", "goal_no")
-        .is_duplicated()
-        .sum()
-        == 0
-    )
+    assert match_results.select(K).is_duplicated().sum() == 0
+    assert goal_events.join(match_results.select(K), on=K, how="anti").height == 0
+    assert goal_events.select(*K, "scorer_team", "goal_no").is_duplicated().sum() == 0
     assert (
         goals_ir.filter(pl.col("goal_no").is_not_null())
-        .select("match_id", "scorer_team", "goal_no")
+        .select(*K, "scorer_team", "goal_no")
         .is_duplicated()
         .sum()
         == 0
@@ -610,23 +572,25 @@ def invariants(goal_events, goals_ir, matches, matches_keyed, shootout_events):
     # 643 de 644 caen en un partido. El que queda es el desempate sin partido de
     # 90 minutos, que existe a propósito y no tiene `goals_ir`.
     assert shootout_events.height == 644
+    assert shootout_events.join(match_results.select(K), on=K, how="semi").height == 643
     assert (
-        shootout_events.filter(pl.col("match_id").is_not_null()).height == 643
-    )
-    assert (
-        shootout_events.group_by("match_id")
+        shootout_events.group_by(*K)
         .agg(pl.len().alias("n"))
         .filter(pl.col("n") > 1)
         .height
         == 0
     )
     assert (
-        shootout_events["match_id"].drop_nulls().n_unique() == 643
-    )  # n_unique() cuenta el NULL
+        shootout_events.select(*K).join(match_results.select(K), on=K, how="semi")[
+            K
+        ]
+        .n_unique()
+        == 643
+    )
     assert (
-        goals_ir.filter(pl.col("shootout_winner").is_not_null())[
-            "match_id"
-        ].n_unique()
+        goals_ir.filter(pl.col("shootout_winner").is_not_null())
+        .select(*K)
+        .n_unique()
         == 643
     )
     assert goals_ir.filter(pl.col("won_by") == "shootout_tiebreak").height == 0
@@ -649,7 +613,7 @@ def invariants(goal_events, goals_ir, matches, matches_keyed, shootout_events):
     # Y en ningún otro sitio: ningún otro partido puede discrepar de sus goles.
     assert (
         goals_ir.filter(pl.col("has_goal_detail"))
-        .group_by("match_id", "home_team", "away_team")
+        .group_by(*K)
         .agg(
             pl.col("scorer_team")
             .filter(pl.col("scorer_team") == pl.col("home_team"))
@@ -671,8 +635,8 @@ def invariants(goal_events, goals_ir, matches, matches_keyed, shootout_events):
     )
 
     # --- geografía ---
-    assert matches_keyed["normalized_country"].null_count() == 0
-    assert matches_keyed["region"].null_count() == 0
+    assert match_results["normalized_country"].null_count() == 0
+    assert match_results["region"].null_count() == 0
 
     # `city` se unifica por alias, no por pliegue: las dos colisiones que NFKD
     # produciría son ciudades distintas y no deben fusionarse.
@@ -702,14 +666,14 @@ def invariants(goal_events, goals_ir, matches, matches_keyed, shootout_events):
     assert goal_scorers.filter(pl.col("scorer") == "Teitur Thordarson").height == 2
     assert goal_scorers.filter(pl.col("scorer") == "Omar Sivori").height == 8
     assert (
-        matches_keyed.filter(pl.col("normalized_country") == "Soviet Union")[
+        match_results.filter(pl.col("normalized_country") == "Soviet Union")[
             "region"
         ]
         .eq("Europe")
         .all()
     )
     assert (
-        matches_keyed.filter(pl.col("normalized_country") == "Zanzibar")[
+        match_results.filter(pl.col("normalized_country") == "Zanzibar")[
             "region"
         ]
         .eq("Africa")
@@ -726,7 +690,7 @@ def invariants(goal_events, goals_ir, matches, matches_keyed, shootout_events):
     # El 70% de los partidos no tiene goleadores: nunca unir por dentro para sacar
     # datos a nivel de partido, porque no se ve que falte nada.
     assert matches["has_goal_detail"].sum() == 14376
-    assert matches_keyed.height == 47381
+    assert match_results.height == 47381
     assert goal_events.height == goal_scorers.height
 
     # --- invariantes que NO hay que "arreglar" ---
