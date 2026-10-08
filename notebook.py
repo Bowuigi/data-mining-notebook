@@ -47,12 +47,33 @@ with app.setup:
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    Nota: Se utilizó IA **sólo** para agilizar la escritura de código y la verificación de datos. En particular, el proceso KDD se llevó a cabo bajo dirección humana y "a pasitos", revisando todo 2 veces por las dudas. Aplicación: OpenCode; Modelo: Space Bunny Free (uno de los "incógnito", eventualmente revelarán cuál es y quién lo hizo).
+    Nota: Se utilizó IA **sólo** para agilizar la escritura de código y la verificación de datos. En particular, el proceso KDD se llevó a cabo bajo dirección humana y "a pasitos", revisando todo 2 veces por las dudas. Aplicación: OpenCode; Modelo: Space Bunny (uno de los "incógnito", eventualmente revelarán cuál es y quién lo hizo).
 
     # Fase 1: Objetivos de negocio
 
-    - Objetivo descriptivo:
-    - Objetivo predictivo:
+    - Objetivo descriptivo: Un medio de comunicación quiere hacer una nota periodística que investigue si diversas características destacadas (según opinión popular) y eventos de partidos de fútbol están relacionados con el nivel de estrés causado al hincha promedio por cada partido. Como primer acercamiento, se busca reducir el número de partidos a analizar maximizando la representatividad, para luego hacer encuestas sobre el estrés percibido.
+    - Objetivo predictivo: Un club deportivo quiere completar datos históricos de partidos internacionales (no cubiertos en estos _datasets_ actuales) para enviárselos a la RSSSF y necesita un proceso de verificación de consistencia para comparar diversas fuentes. Cada una de estas fuentes contiene un registro detallado de penales acertados (durante y post-juego) y el resultado final del partido (de tablas de clasificación y puntajes particulares), pero el resto está incompleto.
+    """)
+    return
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    # Fase 5: Selección de la tarea de minería de datos
+
+    Formalización técnica:
+
+    - Para el objetivo descriptivo: La tarea es de **clustering**. (incompleto)
+    - Para el objetivo predictivo: La tarea es de **clasificación (supervisada)**. El resultado debe ser un modelo (evaluado apropiadamente) que pueda predecir si un equipo ganó, empató o perdió según un registro detallado sobre penales acertados. (incompleto?)
+
+    # Fase 6: Selección del algoritmo y proceso analítico
+
+    - Para el objetivo descriptivo:
+      - k-Means: (falta justificar)
+      - ???: (falta elegir método y justificar, buscar en la documentación de scikit-learn)
+    - Para el objetivo predictivo:
+      - XGBoost: El algoritmo es resistente al ruido y todo eso (falta terminar de justificar)
+      - ???: (falta elegir método y justificar, buscar en la documentación de scikit-learn)
     """)
     return
 
