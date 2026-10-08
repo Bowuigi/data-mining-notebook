@@ -29,20 +29,6 @@ with app.setup:
     import unidecode
     from corrections import CITY_ALIASES, COUNTRY_ALIASES, REGION, TEAM_ALIASES
 
-    ### Load data
-
-    def _from_csv(filename: str):
-        return pl.read_csv(
-            filename, null_values=["NA"], schema_overrides={"date": pl.Date}
-        )
-
-    base_goal_scorers = _from_csv("data/Goal_Scorers.csv")
-    base_match_results = _from_csv("data/Match_Results.csv")
-    base_penalty_shootouts = _from_csv("data/Penalty_Shootouts.csv")
-
-    # Clave primaria compuesta que identifica un partido
-    K = ["date", "home_team", "away_team"]
-
 
 @app.cell(hide_code=True)
 def _():
@@ -54,14 +40,6 @@ def _():
     - Objetivo descriptivo: Un medio de comunicación quiere hacer una nota periodística que investigue si diversas características destacadas (según opinión popular) y eventos de partidos de fútbol están relacionados con el nivel de estrés causado al hincha promedio por cada partido. Como primer acercamiento, se busca reducir el número de partidos a analizar maximizando la representatividad, para luego hacer encuestas sobre el estrés percibido.
     - Objetivo predictivo: Un club deportivo quiere completar datos históricos de partidos internacionales (no cubiertos en estos _datasets_ actuales) para enviárselos a la RSSSF y necesita un proceso de verificación de consistencia para comparar diversas fuentes. Cada una de estas fuentes contiene un registro detallado de penales acertados (durante y post-juego) y el resultado final del partido (de tablas de clasificación y puntajes particulares), pero el resto está incompleto.
 
-    # Fase 2: Selección y creación del target dataset
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def quirks_doc():
-    mo.md(r"""
     # Prerequisitos para la fase 2 pero técnicamente de la fase 3
 
     Algunas cosas son exclusivamente de la fase 3, pero igual se documenta todo junto
@@ -85,9 +63,22 @@ def quirks_doc():
     """)
     return
 
-
 @app.cell
 def _():
+    def _from_csv(filename):
+      return pl.read_csv(
+          filename, null_values=["NA"], schema_overrides={"date": pl.Date}
+      )
+    base_goal_scorers = _from_csv("data/Goal_Scorers.csv")
+    base_match_results = _from_csv("data/Match_Results.csv")
+    base_penalty_shootouts = _from_csv("data/Penalty_Shootouts.csv")
+
+    # Clave primaria compuesta que identifica un partido
+    K = ["date", "home_team", "away_team"]
+
+
+@app.cell
+def _(K, base_goal_scorers, base_match_results, base_penalty_shootouts):
     goal_scorers = base_goal_scorers
     match_results = base_match_results
     penalty_shootouts = base_penalty_shootouts
@@ -255,7 +246,7 @@ def ir_doc():
 
 
 @app.cell
-def goal_events(goal_scorers, match_results):
+def goal_events(K, goal_scorers, match_results):
     # Una fila por gol real. El orden dentro de un partido es el del source data, y
     # `goal_no` es la posición de secuencia autoritativa: nada aguas abajo la recalcula.
     # Las filas repetidas de `goal_scorers` son hat-tricks y goles repetidos de un
@@ -303,7 +294,7 @@ def goal_events(goal_scorers, match_results):
 
 
 @app.cell
-def shootout_events(match_results, penalty_shootouts):
+def shootout_events(K, match_results, penalty_shootouts):
     # Una fila por shootout. Las 643 caen en un partido de `match_results`: el
     # desempate sin partido de 90 minutos ya se descartó en la celda de base, así que
     # acá la unión es total y no hace falta_left_ ni anti-join.
@@ -325,7 +316,7 @@ def shootout_events(match_results, penalty_shootouts):
 
 
 @app.cell
-def matches(goal_events, match_results, shootout_events):
+def matches(K, goal_events, match_results, shootout_events):
     # Una fila por partido. El marcador se reconcilia acá, una sola vez: si el partido
     # tiene goles registrados, el marcador pasa a ser lo que dicen las filas de gol.
     # Los goles sólo suman información, así que un partido con pocos goleadores nunca
@@ -422,7 +413,7 @@ def matches(goal_events, match_results, shootout_events):
 
 
 @app.cell
-def goals_ir(goal_events, matches):
+def goals_ir(K, goal_events, matches):
     # Una fila por momento del partido. Los partidos con goleadores usan los goles
     # reales de `goal_events`; los que no tienen, se derivan del marcador para que
     # sobrevivan los N-0 y los 0-0. Un 0-0 sin goleadores conserva una fila de
@@ -556,6 +547,7 @@ def _():
 
 @app.cell(hide_code=True)
 def invariants(
+    K,
     goal_events,
     goal_scorers,
     goals_ir,
