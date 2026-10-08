@@ -67,9 +67,10 @@ def _():
 @app.cell
 def _():
     def _from_csv(filename):
-      return pl.read_csv(
-          filename, null_values=["NA"], schema_overrides={"date": pl.Date}
-      )
+        return pl.read_csv(
+            filename, null_values=["NA"], schema_overrides={"date": pl.Date}
+        )
+
     base_goal_scorers = _from_csv("data/Goal_Scorers.csv")
     base_match_results = _from_csv("data/Match_Results.csv")
     base_penalty_shootouts = _from_csv("data/Penalty_Shootouts.csv")
@@ -188,7 +189,7 @@ def _(K, base_goal_scorers, base_match_results, base_penalty_shootouts):
             & (pl.col("city") == "Georgetown")
         )
     )
-    return goal_scorers, match_results, penalty_shootouts
+    return goal_scorers, match_results
 
 
 @app.cell(hide_code=True)
@@ -213,26 +214,28 @@ def ir_doc():
       - `minute` → `goal_minute`
       - `own_goal` → `goal_was_own_goal`
       - `penalty` → `goal_was_penalty`
-    - `matches_ir`: Cada fila es un resultado del partido conforme va pasando.
-      <br>Suma las siguientes columnas a `match_results`:
-      - `benefitting_team`: El equipo que se benefició del gol en ese momento (no hay que invertirlo para `own_goal`). Si es `NULL`, es el inicio del partido (fila incluída para no borrar partidos 0-0 y para poder obtener con facilidad sólo los partidos si hacen falta). Si no, es un gol.
-      - `benefitting_team_score`: Marcador de ese equipo hasta e incluyendo ese gol. Si es 0 (y por tanto `benefitting_team` es `NULL`), es el inicio del partido. Si no, es un gol.
-
+    - `match_data`: Cada fila son los datos de cada partido. Recorte de `match_results`.
         Se renombran las siguientes columnas de `match_results`:
       - `home_score` → `final_home_score`
       - `away_score` → `final_away_score`
       - `neutral` → `neutral_field`
+    - `match_expected_goals`: Cada fila es un resultado del partido conforme va pasando, extraído de `match_results`.
+      <br>Suma las siguientes columnas a `match_results`:
+      - `benefitting_team`: El equipo que se benefició del gol en ese momento (no hay que invertirlo para `own_goal`). Si es `NULL`, es el inicio del partido (fila incluída para no borrar partidos 0-0 y para poder obtener con facilidad sólo los partidos si hacen falta). Si no, es un gol.
+      - `benefitting_team_score`: Marcador de ese equipo hasta e incluyendo ese gol. Si es 0 (y por tanto `benefitting_team` es `NULL`), es el inicio del partido. Si no, es un gol.
     """)
     return
 
 
 @app.cell
-def goal_scorers_ir(K, goal_scorers, match_results):
+def goal_scorers_ir(K, goal_scorers):
     goal_scorers_ir = (
         goal_scorers.lazy()
         .sort("date", "minute", nulls_last=True)
         .with_columns(
-            benefitting_team_score=pl.int_range(1, pl.len() + 1).over(*K, "team"),
+            benefitting_team_score=pl.int_range(1, pl.len() + 1).over(
+                *K, "team"
+            ),
             has_incomplete_minute_data=pl.col("minute").is_null().over(*K),
         )
         .rename(
@@ -257,62 +260,80 @@ def goal_scorers_ir(K, goal_scorers, match_results):
     )
 
     goal_scorers_ir
-    return (goal_scorers_ir,)
+    return
 
 
 @app.cell
-def matches_ir():
-    def _scored_goals(side: str):
-        return (
-          match_results.lazy()
-          .with_columns(
-            benefitting_team_score=pl.int_ranges(1, pl.col(f"{side}_score") + 1),
-          )
-          .explode("benefitting_team_score", empty_as_null=False)
-          .filter(pl.col("benefitting_team_score").is_not_null())
-          .select(
-            "date",
-            "home_team",
-            "away_team",
-            pl.col(f"{side}_team").alias("benefitting_team"),
-            "benefitting_team_score",
-            pl.col("home_score").alias("final_home_score"),
-            pl.col("away_score").alias("final_away_score"),
-            "tournament",
-            "city",
-            "country",
-            pl.col("neutral").alias("neutral_field")
-          )
-        )
-    # One zero-th row per match, so 0-N and N-0 matches are kept without duplicates
-    _goalless_rows = match_results.lazy().select(
+def _(match_results):
+    RENAMED = {
+        "home_score": "final_home_score",
+        "away_score": "final_away_score",
+        "neutral": "neutral_field",
+    }
+    MATCH_INFO = [
         "date",
         "home_team",
         "away_team",
-        pl.lit(None, dtype=pl.String).alias("benefitting_team"),
-        pl.lit(0, dtype=pl.Int64).alias("benefitting_team_score"),
-        pl.col("home_score").alias("final_home_score"),
-        pl.col("away_score").alias("final_away_score"),
+        "final_home_score",
+        "final_away_score",
         "tournament",
         "city",
         "country",
-        pl.col("neutral").alias("neutral_field"),
+        "normalized_country",
+        "region",
+        "neutral_field",
+    ]
+
+    # One row per match: who played, where, when and the final score.
+    match_data = match_results.rename(RENAMED)
+
+    _match_data = match_data.lazy()
+
+    def _scored_goals(side: str):
+        return (
+            _match_data.with_columns(
+                benefitting_team_score=pl.int_ranges(
+                    1, pl.col(f"final_{side}_score") + 1
+                ),
+            )
+            .explode("benefitting_team_score", empty_as_null=False)
+            .filter(pl.col("benefitting_team_score").is_not_null())
+            .select(
+                pl.col(f"{side}_team").alias("benefitting_team"),
+                "benefitting_team_score",
+                *MATCH_INFO,
+            )
+        )
+
+    # One zero-th row per match, so 0-N and N-0 matches are kept without duplicates
+    _goalless_rows = _match_data.select(
+        pl.lit(None, dtype=pl.String).alias("benefitting_team"),
+        pl.lit(0, dtype=pl.Int64).alias("benefitting_team_score"),
+        *MATCH_INFO,
     )
 
-    matches_ir = (
+    # One row per goal, in goal order. Expected goals = how many goals that team
+    # had scored up to and including this one; 0 on the match-start row.
+    match_expected_goals = (
         pl.concat(
-            [
-                _scored_goals("home"),
-                _scored_goals("away"),
-                _goalless_rows,
-            ],
+            [_scored_goals("home"), _scored_goals("away"), _goalless_rows],
             how="diagonal_relaxed",
         )
         .sort("date", "benefitting_team", "benefitting_team_score")
+        .select(
+            "date",
+            "home_team",
+            "away_team",
+            "benefitting_team",
+            pl.col("benefitting_team_score").alias("expected_goals"),
+            "final_home_score",
+            "final_away_score",
+        )
         .collect()
     )
-    matches_ir
-    return (matches_ir,)
+
+    mo.vstack([match_data, match_expected_goals])
+    return
 
 
 @app.cell(hide_code=True)
