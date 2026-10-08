@@ -38,14 +38,13 @@ with app.setup:
     match_results = _from_csv("data/Match_Results.csv")
     penalty_shootouts = _from_csv("data/Penalty_Shootouts.csv")
 
-    ### Correcciones sobre el source data
+    ### Correcciones sobre los datos base
 
     # Clave natural de un partido. Tras las correcciones de esta celda es única, y
     # `match_id` pasa a ser la única clave de unión del notebook.
     K = ["date", "home_team", "away_team"]
 
-    # Se normaliza hacia la grafía oficial, que es la que usan las fuentes externas
-    # (Elo, FIFA) y por lo tanto la que deja los joins enganchados.
+    # Se usan los nombres oficiales actuales de algunos equipos y ciudades
     TEAM_ALIASES = {"Åland Islands": "Åland", "Saare County": "Saaremaa"}
     CITY_ALIASES = {"Tananarive": "Antananarivo"}
 
@@ -354,13 +353,7 @@ with app.setup:
         ]
     )
 
-    # Nombres de jugador: se les sacan los diacríticos sin tocar las mayúsculas
-    # (`Sívori` -> `Sivori`). Es la única unificación que hace falta, y por eso NO
-    # hay mapa de alias: sobre 14.335 goleadores distintos, `normalize("NFKD")`
-    # resuelve por sí solo las 7 únicas colisiones, y todas son genuinamente la misma
-    # persona. Cualquier unificación más agresiva sería falsa: `Sándor Müller` y
-    # `Gerd Müller` son dos jugadores distintos, igual que el `Ronaldo` a secas
-    # (39 goles) y `Cristiano Ronaldo` (108).
+    # Se convierten los nombres de jugador a ~ASCII
     goal_scorers = goal_scorers.with_columns(
         pl.col("scorer")
         .str.normalize("NFKD")
@@ -368,6 +361,7 @@ with app.setup:
         .alias("scorer")
     )
 
+    # Aplicar aliases
     match_results = match_results.with_columns(
         [pl.col(c).replace(TEAM_ALIASES) for c in ("home_team", "away_team")]
     )
@@ -377,6 +371,15 @@ with app.setup:
             for c in ("home_team", "away_team", "winner")
         ]
     )
+    match_results = match_results.with_columns(
+        pl.col("city").replace(CITY_ALIASES)
+    )
+    match_results = match_results.with_columns(
+        pl.col("country").replace(COUNTRY_ALIASES).alias("normalized_country")
+    ).with_columns(
+        pl.col("normalized_country").replace(REGION).alias("region")
+    )
+
 
     # 2011-06-29 está invertido: el desempate lo ganó Åland como local.
     _is_tiebreak = (pl.col("date") == pl.date(2011, 6, 29)) & (
@@ -391,10 +394,6 @@ with app.setup:
         .then(pl.col("home_team"))
         .otherwise(pl.col("away_team"))
         .alias("away_team"),
-    )
-
-    match_results = match_results.with_columns(
-        pl.col("city").replace(CITY_ALIASES)
     )
 
     # 17 claves duplicadas por un segundo registro `Friendly` de un partido de torneo
@@ -460,13 +459,6 @@ with app.setup:
             & (pl.col("city") == "Georgetown")
         )
     )
-
-    match_results = match_results.with_columns(
-        pl.col("country").replace(COUNTRY_ALIASES).alias("normalized_country")
-    ).with_columns(
-        pl.col("normalized_country").replace(REGION).alias("region")
-    )
-
 
 @app.cell(hide_code=True)
 def _():
