@@ -188,7 +188,7 @@ def _(K, base_goal_scorers, base_match_results, base_penalty_shootouts):
             & (pl.col("city") == "Georgetown")
         )
     )
-    return goal_scorers, match_results
+    return goal_scorers, match_results, penalty_shootouts
 
 
 @app.cell(hide_code=True)
@@ -213,12 +213,21 @@ def ir_doc():
       - `minute` → `goal_minute`
       - `own_goal` → `goal_was_own_goal`
       - `penalty` → `goal_was_penalty`
+    - `matches_ir`: Cada fila es un resultado del partido conforme va pasando.
+      <br>Suma las siguientes columnas a `match_results`:
+      - `benefitting_team`: El equipo que se benefició del gol en ese momento (no hay que invertirlo para `own_goal`). Si es `NULL`, es el inicio del partido (fila incluída para no borrar partidos 0-0 y para poder obtener con facilidad sólo los partidos si hacen falta). Si no, es un gol.
+      - `benefitting_team_score`: Marcador de ese equipo hasta e incluyendo ese gol. Si es 0 (y por tanto `benefitting_team` es `NULL`), es el inicio del partido. Si no, es un gol.
+
+        Se renombran las siguientes columnas de `match_results`:
+      - `home_score` → `final_home_score`
+      - `away_score` → `final_away_score`
+      - `neutral` → `neutral_field`
     """)
     return
 
 
 @app.cell
-def goal_scorers_ir(K, goal_scorers):
+def goal_scorers_ir(K, goal_scorers, match_results):
     goal_scorers_ir = (
         goal_scorers.lazy()
         .sort("date", "minute", nulls_last=True)
@@ -248,11 +257,11 @@ def goal_scorers_ir(K, goal_scorers):
     )
 
     goal_scorers_ir
-    return
+    return (goal_scorers_ir,)
 
 
 @app.cell
-def matches_ir(match_results):
+def matches_ir():
     def _scored_goals(side: str):
         return (
           match_results.lazy()
@@ -303,7 +312,7 @@ def matches_ir(match_results):
         .collect()
     )
     matches_ir
-    return
+    return (matches_ir,)
 
 
 @app.cell(hide_code=True)
