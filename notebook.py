@@ -30,7 +30,7 @@ with app.setup:
 
     import unidecode
 
-    from corrections import (CITY_ALIASES, COUNTRY_ALIASES, REGION, TEAM_ALIASES)
+    from corrections import CITY_ALIASES, COUNTRY_ALIASES, REGION, TEAM_ALIASES
 
     ### Load data
 
@@ -91,7 +91,6 @@ with app.setup:
     ).with_columns(
         pl.col("normalized_country").replace(REGION).alias("region")
     )
-
 
     # `2011-06-29 Saaremaa v Åland` es un desempate sin partido de 90 minutos: no
     # está en `match_results` y no hay marcador al que pegarle. El source lo
@@ -275,9 +274,12 @@ def goal_events():
 
     # Todo gol tiene que pertenecer a un partido de `match_results`. Sin clave
     # sintética esto ya no se ve como un NULL: hay que buscarlo explícitamente.
-    assert goal_events.join(match_results.select(K), on=K, how="anti").height == 0
     assert (
-        goal_events.select(*K, "scorer_team", "goal_no").is_duplicated().sum() == 0
+        goal_events.join(match_results.select(K), on=K, how="anti").height == 0
+    )
+    assert (
+        goal_events.select(*K, "scorer_team", "goal_no").is_duplicated().sum()
+        == 0
     )
 
     goal_events
@@ -297,7 +299,10 @@ def shootout_events():
     ).select(*K, "shootout_winner", "penalty_first_shooter")
 
     assert shootout_events.height == penalty_shootouts.height == 643
-    assert shootout_events.join(match_results.select(K), on=K, how="anti").height == 0
+    assert (
+        shootout_events.join(match_results.select(K), on=K, how="anti").height
+        == 0
+    )
 
     shootout_events
     return (shootout_events,)
@@ -359,7 +364,9 @@ def matches(goal_events, shootout_events):
             .alias("away_score"),
         )
         .join(
-            shootout_events.select(*K, "shootout_winner", "penalty_first_shooter"),
+            shootout_events.select(
+                *K, "shootout_winner", "penalty_first_shooter"
+            ),
             on=K,
             how="left",
         )  # left: la mayoría de los partidos no llegaron a shootout
@@ -504,27 +511,27 @@ def _():
 @app.cell(hide_code=True)
 def quirks_doc():
     mo.md(r"""
-    Cosas raras del **source data**:
-    - `match_results`: 20 claves `(date, home_team, away_team)` repetidas. 17 eran un segundo registro `Friendly` de un partido de torneo (Far Eastern Championship Games 1923-1934, African Friendship Games 1960); se conserva el del torneo. Las otras 3 eran dos partidos distintos con la misma fecha: Singapur-Malasia 0-3 → `1973-09-07`; Guyana-Barbados 2-0 (Linden) → `1977-10-21` y el 0-0 (Georgetown) de `10-22` repetía el de `10-26`; Tahiti-Nueva Caledonia 2-1 y 1-2 compartían `1974-02-17`, con el 1-2 movido a `1974-02-18` **sin confirmar contra una segunda fuente**.
-    - `match_results`: Uruguay-Bolivia `2024-06-27` figura 4-0 y `goal_scorers` registra 5 goles. El source queda 4-0; `matches` y `goals_ir` lo reconcilian a 5-0.
-    - `match_results`: `country` con nombres obsoletos. Hay `normalized_country` (sucesor único) y `region` (geografía actual). Los de varios sucesores (`Soviet Union`, `Yugoslavia`, `Czechoslovakia`, `Serbia and Montenegro`, `Zanzibar`) conservan el nombre histórico.
-    - `city`: 4 aliases, no un pliegue a ASCII. `Tananarive` → `Antananarivo` (10 filas) y 3 pares que sólo difieren en diacríticos (`Bogota`/`Bogotá`, `Gijon`/`Gijón`, `Valparaiso`/`Valparaíso`, 2+1+1 filas). **No hay más**: NFKD sobre las 2.064 ciudades da 5 colisiones y 2 son ciudades distintas -- `San Jose` (United States, 11 filas) vs `San José` (Costa Rica, 272) y `Pula` (Croatia, 4) vs `Púla` (Cyprus, 1). Pliegar `city` las fusionaría.
-    - Equipos: `Åland Islands` → `Åland`, `Saare County` → `Saaremaa`.
-    - `goal_scorers`: 128 filas totalmente duplicadas. **No son un error**: hat-tricks de Lewandowski y Buksa, `Peter Sharne` 4 veces. No deduplicar.
-    - `goal_scorers`: 8 pares de goleadores diferían sólo en diacríticos (`Sívori`/`Sivori`, `Kéïta`/`Keita`, `Barthélemy`/`Barthelemy`, `Nguyễn Hồng Sơn`/`Nguyen Hong Son`, `Désir`/`Desir`, `Éder`/`Eder`, `Rivas`, `Þórðarson`/`Thordarson`). Se pliegan transliterando con `unidecode`. **No hay mapa de alias**: sobre 14.335 goleadores ésos son los únicos 8 casos, y unificar más sería falso (`Gerd Müller` y `Sándor Müller` son dos jugadores distintos).
-    - `goal_scorers`: el nombre original con diacríticos se pierde. `scorer` queda en ASCII; sobre 14.335 goleadores, 214 cambia al transliterar y 0 quedan con caracteres no-ASCII.
-    - `goal_scorers`: 259 goles sin `minute`, entre `1960-10-16` y `1997-03-31` (no 1963-1980).
-    - `goal_scorers`: 49 goles sin `scorer`, entre `1980-02-24` y `1980-09-23`.
-    - `goal_scorers`: `minute = 122` (Friedenreich, `1919-05-29` Brasil-Uruguay). **No es un error**.
-    - `goal_scorers`: 163 goles de tiempo extra con su minuto real. No están doblados a 45/90.
-    - `penalty_shootouts`: 37 con marcador no empatado. Son segundos partidos de ida y vuelta decididos por el global (33/37 con el partido de vuelta a ≤120 días y global empatado). **No borrarlos**, no recalcular `winner`.
-    - `penalty_shootouts`: `first_shooter` NULL en 413 de 643 (64%).
-    - `penalty_shootouts`: `2011-06-29 Saare County v Åland Islands` es un desempate sin partido de 90 minutos: no está en `match_results`, el source lo tiene invertido (ganó Åland, que figura de visitante) y no tiene marcador. **Se descarta** en la celda de base. Quedan 643 shootouts, todos con partido.
+    Cosas raras encontradas en las fuentes:
+
+    - En `match_results`:
+      - Hay 20 claves primarias compuestas (fecha, equipo local, equipo visitante) repetidas. 17 eran un segundo registro de un partido de torneo como si hubiesen sido amistosos (Far Eastern Championship Games 1923-1934, African Friendship Games 1960); se conserva el del torneo. Las otras 3 eran dos partidos distintos con la misma fecha: Singapur-Malasia 0-3 el 07/09/1973; Guyana-Barbados 2-0 el 21/10/1977 y el 0-0 del 22/10 repetía el del 26/10; Tahiti-Nueva Caledonia 2-1 y 1-2 compartían 17/02/1974, con el 1-2 movido a 18/02/1974 solo para desambiguar.
+      - Uruguay-Bolivia el 27/06/2024 figura 4-0 y `goal_scorers` registra 5 goles (que es correcto). Se reconcilia automáticamente al unir las tablas.
+      - `country` tiene nombres obsoletos.  Se agregan `normalized_country` (sucesor único) y `region` (región geográfica actual). Los paises con varios sucesores (URSS, Yugoslavia, Checoslovaquia, Serbia y Montenegro, Zanzibar) conservan el nombre histórico.
+      - `city` tenía ciudades que estaban repetidas pero escritas distinto. Se usaron aliases para corregirlas.
+      - Algunos equipos tenían nombres obsoletos. Se utilizaron aliases para su corrección.
+    - En `goal_scorers`:
+      - Varios pares de goleadores diferían sólo en caracteres no-ASCII. Se unifican mediante transliteración.
+      - Hay 259 goles sin `minute`, entre el 16/10/1960 y el 31/03/1997.
+      - Hay 49 goles sin `scorer`, entre el 24/02/1980 y el 23/09/1980.
+    - En `penalty_shootouts`:
+      - Hay 37 rondas de penales con marcador no empatado. Es normal (aunque inesperado) por las reglas del fútbol de ese momento.
+      - `first_shooter` es nulo en más de la mitad de los partidos.
+      - Saare County / Saaremaa vs Åland Islands / Åland el 29/06/2011 es un desempate sin partido (ni fila en `match_results`). Aparte de este caso especial, la fuente está mal (ganó Åland, que figura de visitante). Se descarta la fila.
     """)
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def invariants(goal_events, goals_ir, matches, shootout_events):
     # Chequeos permanentes. Cada uno corresponde a un hallazgo que alguien tuvo que
     # descubrir a mano; dejarlos escritos es la forma más barata de que la próxima
@@ -532,8 +539,13 @@ def invariants(goal_events, goals_ir, matches, shootout_events):
 
     # --- clave y grano ---
     assert match_results.select(K).is_duplicated().sum() == 0
-    assert goal_events.join(match_results.select(K), on=K, how="anti").height == 0
-    assert goal_events.select(*K, "scorer_team", "goal_no").is_duplicated().sum() == 0
+    assert (
+        goal_events.join(match_results.select(K), on=K, how="anti").height == 0
+    )
+    assert (
+        goal_events.select(*K, "scorer_team", "goal_no").is_duplicated().sum()
+        == 0
+    )
     assert (
         goals_ir.filter(pl.col("goal_no").is_not_null())
         .select(*K, "scorer_team", "goal_no")
@@ -546,7 +558,10 @@ def invariants(goal_events, goals_ir, matches, shootout_events):
     # Cada shootout cae en exactamente un partido, y ningún partido tiene dos: la
     # correspondencia es 1 a 1 en los dos sentidos.
     assert shootout_events.height == 643
-    assert shootout_events.join(match_results.select(K), on=K, how="anti").height == 0
+    assert (
+        shootout_events.join(match_results.select(K), on=K, how="anti").height
+        == 0
+    )
     assert (
         shootout_events.group_by(*K)
         .agg(pl.len().alias("n"))
@@ -622,14 +637,20 @@ def invariants(goal_events, goals_ir, matches, shootout_events):
         match_results.filter(
             pl.col("city").is_in(["Bogotá", "Gijón", "Valparaíso"])
         ).height
-        == 88 + 14 + 12  # 86+2, 13+1, 11+1: el alias absorbe la grafía sin tilde
+        == 88
+        + 14
+        + 12  # 86+2, 13+1, 11+1: el alias absorbe la grafía sin tilde
     ), "los aliases de ciudad no se aplicaron"
 
     # `scorer` queda en ASCII y transliterado, no mutilado.
     assert (
-        goal_scorers["scorer"].drop_nulls().str.contains(r"[^\x20-\x7E]").sum() == 0
+        goal_scorers["scorer"].drop_nulls().str.contains(r"[^\x20-\x7E]").sum()
+        == 0
     )
-    assert goal_scorers.filter(pl.col("scorer") == "Teitur Thordarson").height == 2
+    assert (
+        goal_scorers.filter(pl.col("scorer") == "Teitur Thordarson").height
+        == 2
+    )
     assert goal_scorers.filter(pl.col("scorer") == "Omar Sivori").height == 8
     assert (
         match_results.filter(pl.col("normalized_country") == "Soviet Union")[
