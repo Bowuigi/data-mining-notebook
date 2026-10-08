@@ -63,6 +63,7 @@ def _():
     """)
     return
 
+
 @app.cell
 def _():
     def _from_csv(filename):
@@ -75,10 +76,12 @@ def _():
 
     # Clave primaria compuesta que identifica un partido
     K = ["date", "home_team", "away_team"]
+    return K, base_goal_scorers, base_match_results, base_penalty_shootouts
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(K, base_goal_scorers, base_match_results, base_penalty_shootouts):
+    # Cleaning
     goal_scorers = base_goal_scorers
     match_results = base_match_results
     penalty_shootouts = base_penalty_shootouts
@@ -200,67 +203,32 @@ def _():
 def ir_doc():
     mo.md(r"""
     **Tablas intermedias:**
-    - `match_results` (corregida): Una fila por partido, con `(date, home_team, away_team)`
-      como clave única de unión de todo el notebook. Es el punto de partida de todo lo
-      demás, así que no es una tabla intermedia: las columnas que le suman las
-      correcciones de la celda de base son
-      - `normalized_country`: País actual cuando hay un sucesor único y no ambiguo; si no, el nombre histórico tal cual.
-      - `region`: Geografía actual, siempre bajo un nombre actual (`USSR` → `Europe`, `Zanzibar` → `Africa`).
-    - `goal_events`: Una fila por gol de `goal_scorers`.
+    - `goal_scorers_ir`: Una fila por gol de `goal_scorers`.
       <br>Suma las siguientes columnas:
-      - `goal_no`: Enésimo gol de ese equipo en ese partido, según el orden del source data.
+      - `benefitting_team_score`: Número de gol del equipo que se benefició en ese partido, según el orden de los datos de base.
       - `has_incomplete_minute_data`: `True` si a algún gol de ese partido le falta `minute`.
 
         Se renombran las siguientes columnas de `goal_scorers`:
-      - `team` → `scorer_team`
+      - `team` → `benefitting_team`
       - `minute` → `goal_minute`
       - `own_goal` → `goal_was_own_goal`
       - `penalty` → `goal_was_penalty`
-    - `shootout_events`: Una fila por shootout de `penalty_shootouts`.
-      <br>Es `penalty_shootouts` renombrado y sin el desempate `2011-06-29 Saaremaa v
-      Åland`, que ya se descartó en la celda de base. Sus 643 filas caen todas en un
-      partido de `match_results`.
-
-        Se renombran las siguientes columnas de `penalty_shootouts`:
-      - `winner` → `shootout_winner`
-      - `first_shooter` → `penalty_first_shooter`
-    - `matches`: Una fila por partido, con el marcador reconciliado contra los goles.
-      <br>Suma las siguientes columnas:
-      - `has_goal_detail`: `True` si el partido tiene goles en `goal_scorers` (14.376 de 47.381).
-      - `shootout_winner`, `penalty_first_shooter`: Del shootout, si lo hubo.
-      - `winner`: Local o visitante según el marcador; si empataron, el ganador del shootout.
-      - `won_by`: `goals` / `penalties` / `penalties_after_aggregate`.
-    - `goals_ir`: Una fila por momento del partido: los goles reales de `goal_events`, y para los partidos sin goleadores, filas derivadas del marcador.
-      <br>Suma las siguientes columnas a los goles:
-      - `goal_no`, `has_incomplete_minute_data`: De `goal_events`.
-      - `current_team_score`: Marcador de ese equipo hasta e incluyendo ese gol. Si `scorer_team` es `NULL`, es el inicio de un partido 0-0 sin goleadores.
-      - `has_goal_detail`: `False` si la fila se derivó del marcador y no de `goal_scorers`.
-      - `shootout_winner`, `penalty_first_shooter`, `won_by`: Del partido, por la clave `(date, home_team, away_team)`.
-
-        Se renombran las siguientes columnas de `matches`:
-      - `home_score` → `final_home_score`
-      - `away_score` → `final_away_score`
-      - `neutral` → `neutral_field`
     """)
     return
 
 
 @app.cell
-def goal_events(K, goal_scorers, match_results):
-    # Una fila por gol real. El orden dentro de un partido es el del source data, y
-    # `goal_no` es la posición de secuencia autoritativa: nada aguas abajo la recalcula.
-    # Las filas repetidas de `goal_scorers` son hat-tricks y goles repetidos de un
-    # mismo jugador, no duplicados, así que no se deduplica nada.
-    goal_events = (
+def goal_scorers_ir(K, goal_scorers, match_results):
+    goal_scorers_ir = (
         goal_scorers.lazy()
         .sort("date", "minute", nulls_last=True)
         .with_columns(
-            goal_no=pl.int_range(1, pl.len() + 1).over(*K, "team"),
+            benefitting_team_score=pl.int_range(1, pl.len() + 1).over(*K, "team"),
             has_incomplete_minute_data=pl.col("minute").is_null().over(*K),
         )
         .rename(
             {
-                "team": "scorer_team",
+                "team": "benefitting_team",
                 "minute": "goal_minute",
                 "own_goal": "goal_was_own_goal",
                 "penalty": "goal_was_penalty",
@@ -268,8 +236,8 @@ def goal_events(K, goal_scorers, match_results):
         )
         .select(
             *K,
-            "scorer_team",
-            "goal_no",
+            "benefitting_team",
+            "benefitting_team_score",
             "scorer",
             "goal_minute",
             "goal_was_own_goal",
@@ -279,232 +247,13 @@ def goal_events(K, goal_scorers, match_results):
         .collect()
     )
 
-    # Todo gol tiene que pertenecer a un partido de `match_results`. Sin clave
-    # sintética esto ya no se ve como un NULL: hay que buscarlo explícitamente.
-    assert (
-        goal_events.join(match_results.select(K), on=K, how="anti").height == 0
-    )
-    assert (
-        goal_events.select(*K, "scorer_team", "goal_no").is_duplicated().sum()
-        == 0
-    )
-
-    goal_events
-    return (goal_events,)
+    goal_scorers_ir
+    return (goal_scorers_ir,)
 
 
 @app.cell
-def shootout_events(K, match_results, penalty_shootouts):
-    # Una fila por shootout. Las 643 caen en un partido de `match_results`: el
-    # desempate sin partido de 90 minutos ya se descartó en la celda de base, así que
-    # acá la unión es total y no hace falta_left_ ni anti-join.
-    shootout_events = penalty_shootouts.rename(
-        {
-            "winner": "shootout_winner",
-            "first_shooter": "penalty_first_shooter",
-        }
-    ).select(*K, "shootout_winner", "penalty_first_shooter")
-
-    assert shootout_events.height == penalty_shootouts.height == 643
-    assert (
-        shootout_events.join(match_results.select(K), on=K, how="anti").height
-        == 0
-    )
-
-    shootout_events
-    return (shootout_events,)
-
-
-@app.cell
-def matches(K, goal_events, match_results, shootout_events):
-    # Una fila por partido. El marcador se reconcilia acá, una sola vez: si el partido
-    # tiene goles registrados, el marcador pasa a ser lo que dicen las filas de gol.
-    # Los goles sólo suman información, así que un partido con pocos goleadores nunca
-    # puede empeorar su marcador.
-    #
-    # `2024-06-27 Uruguay-Bolivia` es el único partido donde el source data discrepa
-    # (4-0 registrado, 5 goles) y queda reparado acá, sin fix a mano.
-    _goals_counted = (
-        goal_events.lazy()
-        .group_by(*K)
-        .agg(
-            pl.col("scorer_team")
-            .filter(pl.col("scorer_team") == pl.col("home_team"))
-            .len()
-            .cast(pl.Int64)
-            .alias("_goals_from_rows"),
-            pl.col("scorer_team")
-            .filter(pl.col("scorer_team") == pl.col("away_team"))
-            .len()
-            .cast(pl.Int64)
-            .alias("_goals_from_rows_away"),
-        )
-        .collect()
-    )
-
-    _MATCH_COLUMNS = [
-        *K,
-        "home_score",
-        "away_score",
-        "tournament",
-        "city",
-        "country",
-        "normalized_country",
-        "region",
-        "neutral",
-    ]
-
-    matches = (
-        match_results.select(*_MATCH_COLUMNS)
-        .join(_goals_counted, on=K, how="left")
-        .with_columns(
-            pl.col("_goals_from_rows").is_not_null().alias("has_goal_detail")
-        )
-        .with_columns(
-            pl.when(pl.col("has_goal_detail"))
-            .then(pl.col("_goals_from_rows"))
-            .otherwise(pl.col("home_score"))
-            .alias("home_score"),
-            pl.when(pl.col("has_goal_detail"))
-            .then(pl.col("_goals_from_rows_away"))
-            .otherwise(pl.col("away_score"))
-            .alias("away_score"),
-        )
-        .join(
-            shootout_events.select(
-                *K, "shootout_winner", "penalty_first_shooter"
-            ),
-            on=K,
-            how="left",
-        )  # left: la mayoría de los partidos no llegaron a shootout
-        .with_columns(
-            pl.when(pl.col("shootout_winner").is_null())
-            .then(pl.lit("goals"))
-            .when(pl.col("home_score") != pl.col("away_score"))
-            .then(pl.lit("penalties_after_aggregate"))
-            .otherwise(pl.lit("penalties"))
-            .alias("won_by"),
-            # Cuando hubo shootout, el partido lo decidió el shootout. En los
-            # playoffs de ida y vuelta el ganador de la partida registrada no es
-            # necesariamente el que avanzó: en 18 de los 37 perdieron la ida.
-            pl.when(pl.col("shootout_winner").is_not_null())
-            .then(pl.col("shootout_winner"))
-            .when(pl.col("home_score") > pl.col("away_score"))
-            .then(pl.col("home_team"))
-            .when(pl.col("home_score") < pl.col("away_score"))
-            .then(pl.col("away_team"))
-            .otherwise(pl.lit(None, dtype=pl.String))
-            .alias("winner"),
-        )
-        .select(
-            *_MATCH_COLUMNS,
-            "has_goal_detail",
-            "shootout_winner",
-            "penalty_first_shooter",
-            "winner",
-            "won_by",
-        )
-    )
-
-    matches = matches.sort(*K)
-
-    matches
-    return (matches,)
-
-
-@app.cell
-def goals_ir(K, goal_events, matches):
-    # Una fila por momento del partido. Los partidos con goleadores usan los goles
-    # reales de `goal_events`; los que no tienen, se derivan del marcador para que
-    # sobrevivan los N-0 y los 0-0. Un 0-0 sin goleadores conserva una fila de
-    # arranque, con `scorer_team = NULL`.
-    def _rows_from_score(side: str):
-        return (
-            matches.filter(~pl.col("has_goal_detail"))
-            .lazy()
-            .select(
-                *K,
-                pl.col(f"{side}_team").alias("scorer_team"),
-                pl.col(f"{side}_score")
-                .cast(pl.UInt32)
-                .alias("current_team_score"),
-            )
-            .with_columns(
-                pl.int_ranges(1, pl.col("current_team_score") + 1).alias(
-                    "goal_no"
-                )
-            )
-            .explode("goal_no", empty_as_null=True)
-            .filter(pl.col("goal_no").is_not_null())
-            .with_columns(
-                pl.col("goal_no").cast(pl.UInt32),
-                pl.col("current_team_score").cast(pl.UInt32),
-                pl.lit(None, dtype=pl.String).alias("scorer"),
-                pl.lit(None, dtype=pl.Int64).alias("goal_minute"),
-                pl.lit(False).alias("goal_was_own_goal"),
-                pl.lit(False).alias("goal_was_penalty"),
-                pl.lit(False).alias("has_incomplete_minute_data"),
-                pl.lit(False).alias("has_goal_detail"),
-            )
-        )
-
-    _kickoffs = (
-        matches.filter(
-            (~pl.col("has_goal_detail"))
-            & (pl.col("home_score") == 0)
-            & (pl.col("away_score") == 0)
-        )
-        .lazy()
-        .select(
-            *K,
-            pl.lit(None, dtype=pl.String).alias("scorer_team"),
-            pl.lit(None, dtype=pl.UInt32).alias("goal_no"),
-            pl.lit(0, dtype=pl.UInt32).alias("current_team_score"),
-            pl.lit(None, dtype=pl.String).alias("scorer"),
-            pl.lit(None, dtype=pl.Int64).alias("goal_minute"),
-            pl.lit(False).alias("goal_was_own_goal"),
-            pl.lit(False).alias("goal_was_penalty"),
-            pl.lit(False).alias("has_incomplete_minute_data"),
-            pl.lit(False).alias("has_goal_detail"),
-        )
-    )
-
-    goals_ir = (
-        pl.concat(
-            [
-                goal_events.lazy().with_columns(
-                    pl.lit(True).alias("has_goal_detail")
-                ),
-                _rows_from_score("home"),
-                _rows_from_score("away"),
-                _kickoffs,
-            ],
-            how="diagonal_relaxed",
-        )
-        .join(
-            matches.lazy().select(
-                *K,
-                pl.col("home_score").cast(pl.Int64).alias("final_home_score"),
-                pl.col("away_score").cast(pl.Int64).alias("final_away_score"),
-                "tournament",
-                "city",
-                "country",
-                "normalized_country",
-                "region",
-                pl.col("neutral").alias("neutral_field"),
-                "shootout_winner",
-                "penalty_first_shooter",
-                "won_by",
-            ),
-            on=K,
-            how="left",
-        )
-        .sort(*K, "scorer_team", "goal_no", nulls_last=True)
-        .collect()
-    )
-
-    goals_ir
-    return (goals_ir,)
+def _():
+    pass
 
 
 @app.cell(hide_code=True)
@@ -526,209 +275,6 @@ def _():
       - XGBoost: El algoritmo es resistente al ruido y todo eso (falta terminar de justificar)
       - Nearest Neighbors: (falta justificar)
     """)
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    # Otros experimentos (no se usan todavía)
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    # Pruebas que verifican la consistencia de los datos
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def invariants(
-    K,
-    goal_events,
-    goal_scorers,
-    goals_ir,
-    match_results,
-    matches,
-    shootout_events,
-):
-    # Chequeos permanentes. Cada uno corresponde a un hallazgo que alguien tuvo que
-    # descubrir a mano; dejarlos escritos es la forma más barata de que la próxima
-    # pasada no vuelva a tropezar con lo mismo.
-
-    # --- clave y grano ---
-    assert match_results.select(K).is_duplicated().sum() == 0
-    assert (
-        goal_events.join(match_results.select(K), on=K, how="anti").height == 0
-    )
-    assert (
-        goal_events.select(*K, "scorer_team", "goal_no").is_duplicated().sum()
-        == 0
-    )
-    assert (
-        goals_ir.filter(pl.col("goal_no").is_not_null())
-        .select(*K, "scorer_team", "goal_no")
-        .is_duplicated()
-        .sum()
-        == 0
-    )
-
-    # --- shootouts ---
-    # Cada shootout cae en exactamente un partido, y ningún partido tiene dos: la
-    # correspondencia es 1 a 1 en los dos sentidos.
-    assert shootout_events.height == 643
-    assert (
-        shootout_events.join(match_results.select(K), on=K, how="anti").height
-        == 0
-    )
-    assert (
-        shootout_events.group_by(*K)
-        .agg(pl.len().alias("n"))
-        .filter(pl.col("n") > 1)
-        .height
-        == 0
-    )
-    assert (
-        goals_ir.filter(pl.col("shootout_winner").is_not_null())
-        .select(*K)
-        .n_unique()
-        == 643
-    )
-
-    # --- la reconciliación de marcador ---
-    _uruguay_bolivia = goals_ir.filter(
-        (pl.col("date") == pl.date(2024, 6, 27))
-        & (pl.col("home_team") == "Uruguay")
-    )
-    assert (
-        _uruguay_bolivia.filter(pl.col("scorer_team") == "Uruguay").height == 5
-    )
-    assert (
-        _uruguay_bolivia.filter(pl.col("scorer_team") == "Uruguay")[
-            "final_home_score"
-        ]
-        .eq(5)
-        .all()
-    )
-    # Y en ningún otro sitio: ningún otro partido puede discrepar de sus goles.
-    assert (
-        goals_ir.filter(pl.col("has_goal_detail"))
-        .group_by(*K)
-        .agg(
-            pl.col("scorer_team")
-            .filter(pl.col("scorer_team") == pl.col("home_team"))
-            .len()
-            .alias("h"),
-            pl.col("scorer_team")
-            .filter(pl.col("scorer_team") == pl.col("away_team"))
-            .len()
-            .alias("a"),
-            pl.col("final_home_score").first(),
-            pl.col("final_away_score").first(),
-        )
-        .filter(
-            (pl.col("h") != pl.col("final_home_score"))
-            | (pl.col("a") != pl.col("final_away_score"))
-        )
-        .height
-        == 0
-    )
-
-    # --- geografía ---
-    assert match_results["normalized_country"].null_count() == 0
-    assert match_results["region"].null_count() == 0
-
-    # `city` se unifica por alias, no por pliegue: las dos colisiones que NFKD
-    # produciría son ciudades distintas y no deben fusionarse.
-    _cities = match_results.with_columns(
-        pl.col("city").replace(CITY_ALIASES).alias("c")
-    )["c"].unique()
-    # los alias se aplicaron: los valores de entrada ya no están
-    assert not _cities.is_in(CITY_ALIASES.keys()).any()
-    # y las ciudades homónimas de países distintos siguen separadas
-    assert {"San Jose", "San José", "Pula", "Púla"} <= set(_cities.to_list())
-    # las 3 parejas homónimas de país distinto conservan su fila original
-    assert (
-        match_results.filter(pl.col("city").is_in(["San Jose", "Pula"])).height
-        == 11 + 4
-    ), "San Jose (US) y Pula (Croacia) deben conservar sus filas"
-    assert (
-        match_results.filter(
-            pl.col("city").is_in(["Bogotá", "Gijón", "Valparaíso"])
-        ).height
-        == 88
-        + 14
-        + 12  # 86+2, 13+1, 11+1: el alias absorbe la grafía sin tilde
-    ), "los aliases de ciudad no se aplicaron"
-
-    # `scorer` queda en ASCII y transliterado, no mutilado.
-    assert (
-        goal_scorers["scorer"].drop_nulls().str.contains(r"[^\x20-\x7E]").sum()
-        == 0
-    )
-    assert (
-        goal_scorers.filter(pl.col("scorer") == "Teitur Thordarson").height
-        == 2
-    )
-    assert goal_scorers.filter(pl.col("scorer") == "Omar Sivori").height == 8
-    assert (
-        match_results.filter(pl.col("normalized_country") == "Soviet Union")[
-            "region"
-        ]
-        .eq("Europe")
-        .all()
-    )
-    assert (
-        match_results.filter(pl.col("normalized_country") == "Zanzibar")[
-            "region"
-        ]
-        .eq("Africa")
-        .all()
-    )
-
-    # --- etiquetas de shootout ---
-    assert (matches["won_by"] == "goals").sum() == 46738
-    assert (matches["won_by"] == "penalties").sum() == 606
-    assert (matches["won_by"] == "penalties_after_aggregate").sum() == 37
-
-    # --- cobertura ---
-    # El 70% de los partidos no tiene goleadores: nunca unir por dentro para sacar
-    # datos a nivel de partido, porque no se ve que falte nada.
-    assert matches["has_goal_detail"].sum() == 14376
-    assert match_results.height == 47381
-    assert goal_events.height == goal_scorers.height
-
-    # --- invariantes que NO hay que "arreglar" ---
-    assert (
-        goals_ir.filter(pl.col("goal_minute") == 122).height == 1
-    )  # Friedenreich, 1919
-    assert (
-        goal_scorers.is_duplicated().sum() == 128
-    )  # hat-tricks, no duplicados
-    assert (
-        matches.filter(pl.col("won_by") == "penalties_after_aggregate").height
-        == 37
-    )
-    # El ganador de esos 37 es el del shootout, no el de la partida registrada: en 18
-    # de ellos el ganador de la ida perdió el shootout.
-    assert (
-        matches.filter(
-            (pl.col("won_by") == "penalties_after_aggregate")
-            & (pl.col("winner") != pl.col("shootout_winner"))
-        ).height
-        == 0
-    )
-    assert (
-        matches.filter(pl.col("shootout_winner").is_not_null())
-        .filter(pl.col("winner") != pl.col("shootout_winner"))
-        .height
-        == 0
-    )
-
-    "All assertions OK"
     return
 
 
