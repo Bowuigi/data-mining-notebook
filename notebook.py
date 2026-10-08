@@ -93,19 +93,15 @@ with app.setup:
     )
 
 
-    # 2011-06-29 está invertido: el desempate lo ganó Åland como local.
-    _is_tiebreak = (pl.col("date") == pl.date(2011, 6, 29)) & (
-        pl.col("home_team") == "Saaremaa"
-    )
-    penalty_shootouts = penalty_shootouts.with_columns(
-        pl.when(_is_tiebreak)
-        .then(pl.col("away_team"))
-        .otherwise(pl.col("home_team"))
-        .alias("home_team"),
-        pl.when(_is_tiebreak)
-        .then(pl.col("home_team"))
-        .otherwise(pl.col("away_team"))
-        .alias("away_team"),
+    # `2011-06-29 Saaremaa v Åland` es un desempate sin partido de 90 minutos: no
+    # está en `match_results` y no hay marcador al que pegarle. El source lo
+    # además tiene invertido (ganó Åland, que figura como visitante). Se descarta
+    # acá, antes de que nada dependa de él, en vez de inventarle un partido.
+    penalty_shootouts = penalty_shootouts.filter(
+        ~(
+            (pl.col("date") == pl.date(2011, 6, 29))
+            & (pl.col("home_team") == "Saaremaa")
+        )
     )
 
     # 17 claves duplicadas por un segundo registro `Friendly` de un partido de torneo
@@ -214,10 +210,10 @@ def ir_doc():
       - `minute` → `goal_minute`
       - `own_goal` → `goal_was_own_goal`
       - `penalty` → `goal_was_penalty`
-    - `shootout_events`: Una fila por partido de `penalty_shootouts`.
-      <br>Es `penalty_shootouts` renombrado. 643 de sus 644 filas caen en un partido de
-      `match_results`; la restante es `2011-06-29 Åland v Saaremaa`, un desempate sin
-      partido de 90 minutos, y no se une con ninguna.
+    - `shootout_events`: Una fila por shootout de `penalty_shootouts`.
+      <br>Es `penalty_shootouts` renombrado y sin el desempate `2011-06-29 Saaremaa v
+      Åland`, que ya se descartó en la celda de base. Sus 643 filas caen todas en un
+      partido de `match_results`.
 
         Se renombran las siguientes columnas de `penalty_shootouts`:
       - `winner` → `shootout_winner`
@@ -227,7 +223,7 @@ def ir_doc():
       - `has_goal_detail`: `True` si el partido tiene goles en `goal_scorers` (14.376 de 47.381).
       - `shootout_winner`, `penalty_first_shooter`: Del shootout, si lo hubo.
       - `winner`: Local o visitante según el marcador; si empataron, el ganador del shootout.
-      - `won_by`: `goals` / `penalties` / `penalties_after_aggregate` / `shootout_tiebreak`.
+      - `won_by`: `goals` / `penalties` / `penalties_after_aggregate`.
     - `goals_ir`: Una fila por momento del partido: los goles reales de `goal_events`, y para los partidos sin goleadores, filas derivadas del marcador.
       <br>Suma las siguientes columnas a los goles:
       - `goal_no`, `has_incomplete_minute_data`: De `goal_events`.
@@ -290,9 +286,9 @@ def goal_events():
 
 @app.cell
 def shootout_events():
-    # Una fila por shootout. 643 de 644 caen en un partido de `match_results`; la
-    # restante es `2011-06-29 Åland v Saaremaa`, un desempate sin partido de 90
-    # minutos, y se la deja sin unir a propósito.
+    # Una fila por shootout. Las 643 caen en un partido de `match_results`: el
+    # desempate sin partido de 90 minutos ya se descartó en la celda de base, así que
+    # acá la unión es total y no hace falta_left_ ni anti-join.
     shootout_events = penalty_shootouts.rename(
         {
             "winner": "shootout_winner",
@@ -300,8 +296,8 @@ def shootout_events():
         }
     ).select(*K, "shootout_winner", "penalty_first_shooter")
 
-    assert shootout_events.height == penalty_shootouts.height
-    assert shootout_events.join(match_results.select(K), on=K, how="anti").height == 1
+    assert shootout_events.height == penalty_shootouts.height == 643
+    assert shootout_events.join(match_results.select(K), on=K, how="anti").height == 0
 
     shootout_events
     return (shootout_events,)
@@ -366,7 +362,7 @@ def matches(goal_events, shootout_events):
             shootout_events.select(*K, "shootout_winner", "penalty_first_shooter"),
             on=K,
             how="left",
-        )
+        )  # left: la mayoría de los partidos no llegaron a shootout
         .with_columns(
             pl.when(pl.col("shootout_winner").is_null())
             .then(pl.lit("goals"))
@@ -396,29 +392,7 @@ def matches(goal_events, shootout_events):
         )
     )
 
-    # El desempate sin partido de 90 minutos vive sólo acá: no tiene marcador, ni
-    # torneo, ni filas de goles. Es la única fila de `shootout_events` cuya clave no
-    # aparece en `match_results`, así que se localiza con un anti-join.
-    _tiebreaks = shootout_events.join(match_results.select(K), on=K, how="anti").select(
-        *K,
-        pl.lit(None, dtype=pl.Int64).alias("home_score"),
-        pl.lit(None, dtype=pl.Int64).alias("away_score"),
-        pl.lit(None, dtype=pl.String).alias("tournament"),
-        pl.lit(None, dtype=pl.String).alias("city"),
-        pl.lit(None, dtype=pl.String).alias("country"),
-        pl.lit(None, dtype=pl.String).alias("normalized_country"),
-        pl.lit(None, dtype=pl.String).alias("region"),
-        pl.lit(False).alias("neutral"),
-        pl.lit(False).alias("has_goal_detail"),
-        "shootout_winner",
-        "penalty_first_shooter",
-        pl.col("shootout_winner").alias("winner"),
-        pl.lit("shootout_tiebreak").alias("won_by"),
-    )
-
-    matches = pl.concat([matches, _tiebreaks], how="vertical").sort(
-        "date", "home_team", "away_team"
-    )
+    matches = matches.sort(*K)
 
     matches
     return (matches,)
@@ -535,7 +509,7 @@ def quirks_doc():
     - `match_results`: Uruguay-Bolivia `2024-06-27` figura 4-0 y `goal_scorers` registra 5 goles. El source queda 4-0; `matches` y `goals_ir` lo reconcilian a 5-0.
     - `match_results`: `country` con nombres obsoletos. Hay `normalized_country` (sucesor único) y `region` (geografía actual). Los de varios sucesores (`Soviet Union`, `Yugoslavia`, `Czechoslovakia`, `Serbia and Montenegro`, `Zanzibar`) conservan el nombre histórico.
     - `city`: 4 aliases, no un pliegue a ASCII. `Tananarive` → `Antananarivo` (10 filas) y 3 pares que sólo difieren en diacríticos (`Bogota`/`Bogotá`, `Gijon`/`Gijón`, `Valparaiso`/`Valparaíso`, 2+1+1 filas). **No hay más**: NFKD sobre las 2.064 ciudades da 5 colisiones y 2 son ciudades distintas -- `San Jose` (United States, 11 filas) vs `San José` (Costa Rica, 272) y `Pula` (Croatia, 4) vs `Púla` (Cyprus, 1). Pliegar `city` las fusionaría.
-    - Equipos: `Åland Islands` → `Åland`, `Saare County` → `Saaremaa`. `2011-06-29` estaba invertido (`Åland v Saaremaa`).
+    - Equipos: `Åland Islands` → `Åland`, `Saare County` → `Saaremaa`.
     - `goal_scorers`: 128 filas totalmente duplicadas. **No son un error**: hat-tricks de Lewandowski y Buksa, `Peter Sharne` 4 veces. No deduplicar.
     - `goal_scorers`: 8 pares de goleadores diferían sólo en diacríticos (`Sívori`/`Sivori`, `Kéïta`/`Keita`, `Barthélemy`/`Barthelemy`, `Nguyễn Hồng Sơn`/`Nguyen Hong Son`, `Désir`/`Desir`, `Éder`/`Eder`, `Rivas`, `Þórðarson`/`Thordarson`). Se pliegan transliterando con `unidecode`. **No hay mapa de alias**: sobre 14.335 goleadores ésos son los únicos 8 casos, y unificar más sería falso (`Gerd Müller` y `Sándor Müller` son dos jugadores distintos).
     - `goal_scorers`: el nombre original con diacríticos se pierde. `scorer` queda en ASCII; sobre 14.335 goleadores, 214 cambia al transliterar y 0 quedan con caracteres no-ASCII.
@@ -544,8 +518,8 @@ def quirks_doc():
     - `goal_scorers`: `minute = 122` (Friedenreich, `1919-05-29` Brasil-Uruguay). **No es un error**.
     - `goal_scorers`: 163 goles de tiempo extra con su minuto real. No están doblados a 45/90.
     - `penalty_shootouts`: 37 con marcador no empatado. Son segundos partidos de ida y vuelta decididos por el global (33/37 con el partido de vuelta a ≤120 días y global empatado). **No borrarlos**, no recalcular `winner`.
-    - `penalty_shootouts`: `first_shooter` NULL en 414 de 644 (64%).
-    - `penalty_shootouts`: `2011-06-29 Åland v Saaremaa` es un desempate sin partido de 90 minutos. No aparece en `match_results`, no tiene filas en `goals_ir`, y tampoco se le inventa un marcador.
+    - `penalty_shootouts`: `first_shooter` NULL en 413 de 643 (64%).
+    - `penalty_shootouts`: `2011-06-29 Saare County v Åland Islands` es un desempate sin partido de 90 minutos: no está en `match_results`, el source lo tiene invertido (ganó Åland, que figura de visitante) y no tiene marcador. **Se descarta** en la celda de base. Quedan 643 shootouts, todos con partido.
     """)
     return
 
@@ -569,10 +543,10 @@ def invariants(goal_events, goals_ir, matches, shootout_events):
     )
 
     # --- shootouts ---
-    # 643 de 644 caen en un partido. El que queda es el desempate sin partido de
-    # 90 minutos, que existe a propósito y no tiene `goals_ir`.
-    assert shootout_events.height == 644
-    assert shootout_events.join(match_results.select(K), on=K, how="semi").height == 643
+    # Cada shootout cae en exactamente un partido, y ningún partido tiene dos: la
+    # correspondencia es 1 a 1 en los dos sentidos.
+    assert shootout_events.height == 643
+    assert shootout_events.join(match_results.select(K), on=K, how="anti").height == 0
     assert (
         shootout_events.group_by(*K)
         .agg(pl.len().alias("n"))
@@ -581,19 +555,11 @@ def invariants(goal_events, goals_ir, matches, shootout_events):
         == 0
     )
     assert (
-        shootout_events.select(*K).join(match_results.select(K), on=K, how="semi")[
-            K
-        ]
-        .n_unique()
-        == 643
-    )
-    assert (
         goals_ir.filter(pl.col("shootout_winner").is_not_null())
         .select(*K)
         .n_unique()
         == 643
     )
-    assert goals_ir.filter(pl.col("won_by") == "shootout_tiebreak").height == 0
 
     # --- la reconciliación de marcador ---
     _uruguay_bolivia = goals_ir.filter(
@@ -684,7 +650,6 @@ def invariants(goal_events, goals_ir, matches, shootout_events):
     assert (matches["won_by"] == "goals").sum() == 46738
     assert (matches["won_by"] == "penalties").sum() == 606
     assert (matches["won_by"] == "penalties_after_aggregate").sum() == 37
-    assert (matches["won_by"] == "shootout_tiebreak").sum() == 1
 
     # --- cobertura ---
     # El 70% de los partidos no tiene goleadores: nunca unir por dentro para sacar
