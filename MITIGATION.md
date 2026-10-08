@@ -26,8 +26,8 @@ pair, honest coverage flags.
 | F6 | `matches_ir` 107 phantom rows; Guyana self-contradiction | real, caused by F1 | disappears with F1 |
 | F7 | `goals_ir` double-counts goals | **refuted** — 0 duplicated goal identities; only 112 duplicated *kickoff* rows, all from F1 | disappears with F1 |
 | F8 | `_df` inflated +63% | **refuted** — inflation is exactly **+20** | disappears with F1 |
-| F9 | `Tananarive` / `Antananarivo` | real alias | normalise — §3.2 |
-| F10 | `Åland` vs `Åland Islands`; `Saare County` vs `Saaremaa` | real aliases; Saare row also transposed | normalise + fix orientation — §3.3 |
+| F9 | `Tananarive` / `Antananarivo` | real alias | normalise to `Antananarivo` — §3.2 |
+| F10 | `Åland Islands` vs `Åland`; `Saare County` vs `Saaremaa` | real aliases; Saare row also transposed | normalise to `Åland`/`Saaremaa` + fix orientation — §3.3 |
 | F11 | NULL `minute` 259 rows; real range `1960-10-16 → 1997-03-31` | real | doc + flag — §5 |
 | F12 | NULL `scorer` 49; NULL `first_shooter` 414/644 | real, unfixable | doc + flag — §6 |
 | F13 | `won_by` is two-valued and cannot express reality | real schema defect | third value — §4.1 |
@@ -178,17 +178,27 @@ as orphans and the §2.3 assertion fires. Re-run it right after.
 
 ### 3.2 Cities
 
-One `replace` in the load path: `{"Tananarive": "Antananarive"}`.
+One `replace` in the load path: `{"Tananarive": "Antananarivo"}`.
+
+`Antananarivo` is the spelling already present in the data and is kept as canonical; the three
+`Tananarive` rows are the minority variant. No city lookup table is needed at this size.
 
 ### 3.3 Team names
 
-Two one-offs, both fixing real join breakage:
+Two one-offs, both fixing real join breakage. The **official** spelling is kept as canonical —
+`Saaremaa` and `Åland` are the names an external source (Elo, FIFA, Wikipedia) will use, so
+normalising toward them is what makes those joins work:
 
-* `penalty_shootouts` `2023-07-13`: `Åland` → `Åland Islands` (removes the ghost row in `matches`;
-  `winner = Åland` is already correct).
+* `penalty_shootouts` `2023-07-13`: `Åland Islands` → `Åland`, so it matches the 20 `match_results`
+  rows already keyed on `Åland` (removes the ghost row in `matches`; `winner = Åland` is already
+  correct).
 * `2011-06-29 Saare County vs Åland Islands` is **transposed** — the official fixture is
   `Åland v Saaremaa`, a shoot-out-only tiebreak on a rest day with no 90-minute match. Fix the
   orientation; **do not invent a score** for it.
+
+Both edits are one-line alias maps in the load path, applied to all three tables
+(`match_results`, `goal_scorers`, `penalty_shootouts`) — `{"Åland Islands": "Åland",
+"Saare County": "Saaremaa"}` — so the same team cannot appear under two spellings anywhere.
 
 Beyond these, teams are left alone except where the same entity is spelled two ways. Cities and
 countries get proper lookup tables (§3.4); teams do not need one at 336 names.
@@ -226,8 +236,8 @@ match_results = match_results.with_columns(
 
 Notes that matter:
 
-* `normalized_country` is a **country** concern. `Åland`/`Åland Islands`, `Saare County`/
-  `Saaremaa` are *teams*; they are handled in §3.3 and are a separate list. Do not conflate
+* `normalized_country` is a **country** concern. `Åland`/`Åland Islands`, `Saaremaa`/
+  `Saare County` are *teams*; they are handled in §3.3 and are a separate list. Do not conflate
   the two — `German DR` appears as a team name *and* a country value.
 * Derived once, at load, and never recomputed in analysis cells — that removes the
   "two analyses, two continent mappings" failure mode.
@@ -436,11 +446,10 @@ changes this; what code can do is stop analysis assuming otherwise:
 2. `1977-10-21 Guyana 2-0 Barbados` — confirm from a second source (eloratings only).
 3. `1977-08-31 Paraguay 2-0 Argentina`, `1983-02-06 Senegal 2-0 Niger` — aggregate not level
    from the data; likely a wrong *other-leg* score or a wrong `tournament` label.
-4. `Saaremaa` vs `Saare County` — which spelling is canonical (15 rows say `Saare County`).
-5. `USSR` spans Europe and Asia. `region = "Europe"` is the defensible majority bucket; if a
+4. `USSR` spans Europe and Asia. `region = "Europe"` is the defensible majority bucket; if a
    per-match successor is ever needed that is a separate `successor_state` lookup, not a change
    to `normalized_country` (§3.5).
-6. The 35-of-37 aggregate play-offs could optionally become a small `aggregate_ties` table
+5. The 35-of-37 aggregate play-offs could optionally become a small `aggregate_ties` table
    (pair each non-drawn shootout with its reverse-orientation fixture inside 120 days) — 15
    lines, and it turns the dataset's largest apparent anomaly into a labelled subset for
    modelling. Optional.
