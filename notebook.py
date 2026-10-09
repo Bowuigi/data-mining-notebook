@@ -232,42 +232,6 @@ def ir_doc():
 
 
 @app.cell
-def goal_scorers_ir(K, goal_scorers):
-    goal_scorers_ir = (
-        goal_scorers.lazy()
-        .sort("date", "minute", nulls_last=True)
-        .with_columns(
-            benefitting_team_score=pl.int_range(1, pl.len() + 1).over(
-                *K, "team"
-            ),
-            has_incomplete_minute_data=pl.col("minute").is_null().over(*K),
-        )
-        .rename(
-            {
-                "team": "benefitting_team",
-                "minute": "goal_minute",
-                "own_goal": "goal_was_own_goal",
-                "penalty": "goal_was_penalty",
-            }
-        )
-        .select(
-            *K,
-            "benefitting_team",
-            "benefitting_team_score",
-            "scorer",
-            "goal_minute",
-            "goal_was_own_goal",
-            "goal_was_penalty",
-            "has_incomplete_minute_data",
-        )
-        .collect()
-    )
-
-    goal_scorers_ir
-    return
-
-
-@app.cell
 def _(K, match_results, penalty_shootouts):
     # One row per match: who played, where, when and the final score.
     match_data = match_results.join(
@@ -348,7 +312,7 @@ def _(match_data):
             "home_team",
             "away_team",
             "benefitting_team",
-            pl.col("benefitting_team_score").alias("expected_goals"),
+            "benefitting_team_score",
             "final_home_score",
             "final_away_score",
         )
@@ -356,6 +320,42 @@ def _(match_data):
     )
 
     match_expected_goals
+    return
+
+
+@app.cell(hide_code=True)
+def goal_scorers_ir(K, goal_scorers):
+    goal_scorers_ir = (
+        goal_scorers.lazy()
+        .sort("date", "minute", nulls_last=True)
+        .with_columns(
+            benefitting_team_score=pl.int_range(1, pl.len() + 1).over(
+                *K, "team"
+            ),
+            has_incomplete_minute_data=pl.col("minute").is_null().over(*K),
+        )
+        .rename(
+            {
+                "team": "benefitting_team",
+                "minute": "goal_minute",
+                "own_goal": "goal_was_own_goal",
+                "penalty": "goal_was_penalty",
+            }
+        )
+        .select(
+            *K,
+            "benefitting_team",
+            "benefitting_team_score",
+            "scorer",
+            "goal_minute",
+            "goal_was_own_goal",
+            "goal_was_penalty",
+            "has_incomplete_minute_data",
+        )
+        .collect()
+    )
+
+    goal_scorers_ir
     return
 
 
