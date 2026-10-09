@@ -557,5 +557,20 @@ def _():
     return
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    # Fase 7: Minería de datos
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Clustering
+    """)
+    return
+
 if __name__ == "__main__":
     app.run()
