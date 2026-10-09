@@ -446,6 +446,13 @@ def _(K, goals_agg):
         away_known_penalties=pl.coalesce(pl.col("away_known_penalties"), pl.lit(0)),
     )
     match_stats
+    return (match_stats,)
+
+
+@app.cell
+def _(K, match_data, match_stats):
+    matches = match_stats.join(match_data, on=K)
+    matches
     return
 
 
