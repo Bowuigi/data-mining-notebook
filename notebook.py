@@ -463,21 +463,7 @@ def _(K, goals_agg, match_data):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    # Fase 5: Selección de la tarea de minería de datos
-
-    Formalización técnica:
-
-    - Para el objetivo descriptivo: La tarea es de **clustering**, segmentación de partidos por características de juego, época, torneo, localía, goles y penales.
-    - Para el objetivo predictivo: La tarea es de **clasificación supervisada**, predicción de resultado final (Victoria/Empate/Derrota) usando árboles de decisión y Naive Bayes.
-
-    # Fase 6: Selección del algoritmo y proceso analítico
-
-    - Para el objetivo descriptivo (clustering):
-      - K-Means: Algoritmo rápido, escalable, ideal para segmentación global. Requiere elegir $k$ y asume clusters esféricos.
-      - Agglomerative: Jerárquico, no requiere fijar $k$ de antemano, captura estructuras anidadas. Con Ward funciona bien con clusters compactos.
-    - Para el objetivo predictivo (clasificación):
-      - Árbol de Decisión: Interpretable, maneja variables numéricas y categóricas, captura no linealidades y permite extraer reglas. Se limita su tamaño para evitar overfitting.
-      - Naive Bayes: Base probabilística, rápido y simple.
+    # Fase 4: Transformación y reducción de datos
     """)
     return
 
@@ -528,6 +514,29 @@ def _(matches):
     )
     df
     return (df,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    # Fase 5: Selección de la tarea de minería de datos
+
+    Formalización técnica:
+
+    - Para el objetivo descriptivo: La tarea es de **clustering**, segmentación de partidos por características de juego, época, torneo, localía, goles y penales.
+    - Para el objetivo predictivo: La tarea es de **clasificación supervisada**, predicción de resultado final (Victoria/Empate/Derrota) usando árboles de decisión y Naive Bayes.
+
+    # Fase 6: Selección del algoritmo y proceso analítico
+
+    - Para el objetivo descriptivo (clustering):
+      - K-Means: Algoritmo rápido, escalable, ideal para segmentación global. Requiere elegir $k$ y asume clusters esféricos.
+      - Agglomerative: Jerárquico, no requiere fijar $k$ de antemano, captura estructuras anidadas. Con Ward funciona bien con clusters compactos.
+    - Para el objetivo predictivo (clasificación):
+      - Árbol de Decisión: Interpretable, maneja variables numéricas y categóricas, captura no linealidades y permite extraer reglas. Se limita su tamaño para evitar overfitting.
+      - Naive Bayes: Base probabilística, rápido y simple.
+    """)
+    return
+
 
 if __name__ == "__main__":
     app.run()
