@@ -29,8 +29,16 @@ with app.setup(hide_code=True):
     import polars as pl
     import altair as alt
     import unidecode
+    import numpy as np
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.cluster import KMeans, Birch
+    from sklearn.metrics import silhouette_score
+    from sklearn.decomposition import PCA
+
     from corrections import CITY_ALIASES, COUNTRY_ALIASES, REGION, TEAM_ALIASES
 
+    # Para poder graficar conjuntos grandes de datos
+    alt.data_transformers.enable("vegafusion")
 
 @app.cell(hide_code=True)
 def _():
