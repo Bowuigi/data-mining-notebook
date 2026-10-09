@@ -189,7 +189,7 @@ def _(K, base_goal_scorers, base_match_results, base_penalty_shootouts):
             & (pl.col("city") == "Georgetown")
         )
     )
-    return goal_scorers, match_results
+    return goal_scorers, match_results, penalty_shootouts
 
 
 @app.cell(hide_code=True)
@@ -214,11 +214,15 @@ def ir_doc():
       - `minute` → `goal_minute`
       - `own_goal` → `goal_was_own_goal`
       - `penalty` → `goal_was_penalty`
-    - `match_data`: Cada fila son los datos de cada partido. Recorte de `match_results`.
+    - `match_data`: Cada fila son los datos de cada partido. Recorte de `match_results`, unido con `penalty_shootouts`.
+      <br>Se modifican las siguientes columnas de `penalty_shootouts`:
+      - `winner`: Si no hay desempate por penales, se calcula quién es el ganador mediante el puntaje y se pone ese equipo. En caso de empates, vale `NULL`.
+
         Se renombran las siguientes columnas de `match_results`:
       - `home_score` → `final_home_score`
       - `away_score` → `final_away_score`
       - `neutral` → `neutral_field`
+
     - `match_expected_goals`: Cada fila es un resultado del partido conforme va pasando, extraído de `match_results`.
       <br>Suma las siguientes columnas a `match_results`:
       - `benefitting_team`: El equipo que se benefició del gol en ese momento (no hay que invertirlo para `own_goal`). Si es `NULL`, es el inicio del partido (fila incluída para no borrar partidos 0-0 y para poder obtener con facilidad sólo los partidos si hacen falta). Si no, es un gol.
@@ -264,12 +268,36 @@ def goal_scorers_ir(K, goal_scorers):
 
 
 @app.cell
-def _(match_results):
-    RENAMED = {
-        "home_score": "final_home_score",
-        "away_score": "final_away_score",
-        "neutral": "neutral_field",
-    }
+def _(K, match_results, penalty_shootouts):
+    # One row per match: who played, where, when and the final score.
+    match_data = match_results.join(
+        penalty_shootouts, on=K, how="full", coalesce=True
+    ).select(
+        *K,
+        pl.col("home_score").alias("final_home_score"),
+        pl.col("away_score").alias("final_away_score"),
+        "tournament",
+        "city",
+        "country",
+        "normalized_country",
+        "region",
+        pl.coalesce(
+            pl.col("winner"),
+            pl.when(pl.col("home_score") > pl.col("away_score"))
+            .then(pl.col("home_team"))
+            .when(pl.col("home_score") < pl.col("away_score"))
+            .then(pl.col("away_team")),
+        ),
+        "first_shooter",
+        pl.col("neutral").alias("neutral_field"),
+    )
+    match_data
+    return (match_data,)
+
+
+@app.cell
+def _(match_data):
+    _match_data = match_data.lazy()
     MATCH_INFO = [
         "date",
         "home_team",
@@ -283,11 +311,6 @@ def _(match_results):
         "region",
         "neutral_field",
     ]
-
-    # One row per match: who played, where, when and the final score.
-    match_data = match_results.rename(RENAMED)
-
-    _match_data = match_data.lazy()
 
     def _scored_goals(side: str):
         return (
@@ -332,7 +355,7 @@ def _(match_results):
         .collect()
     )
 
-    mo.vstack([match_data, match_expected_goals])
+    match_expected_goals
     return
 
 
