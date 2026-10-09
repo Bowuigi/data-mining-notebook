@@ -212,7 +212,7 @@ def ir_doc():
         Se renombran las siguientes columnas de `goal_scorers`:
       - `team` → `benefitting_team`
       - `minute` → `goal_minute`
-      - `own_goal` → `goal_was_own_goal`
+      - `own_goal` → `goal_was_opponent_own_goal`
       - `penalty` → `goal_was_penalty`
     - `match_data`: Cada fila son los datos de cada partido. Recorte de `match_results`, unido con `penalty_shootouts`.
       <br>Se modifican las siguientes columnas de `penalty_shootouts`:
@@ -313,14 +313,12 @@ def _(match_data):
             "away_team",
             "benefitting_team",
             "benefitting_team_score",
-            "final_home_score",
-            "final_away_score",
         )
         .collect()
     )
 
     match_expected_goals
-    return
+    return (match_expected_goals,)
 
 
 @app.cell(hide_code=True)
@@ -338,7 +336,7 @@ def goal_scorers_ir(K, goal_scorers):
             {
                 "team": "benefitting_team",
                 "minute": "goal_minute",
-                "own_goal": "goal_was_own_goal",
+                "own_goal": "goal_was_opponent_own_goal",
                 "penalty": "goal_was_penalty",
             }
         )
@@ -348,7 +346,7 @@ def goal_scorers_ir(K, goal_scorers):
             "benefitting_team_score",
             "scorer",
             "goal_minute",
-            "goal_was_own_goal",
+            "goal_was_opponent_own_goal",
             "goal_was_penalty",
             "has_incomplete_minute_data",
         )
@@ -356,6 +354,66 @@ def goal_scorers_ir(K, goal_scorers):
     )
 
     goal_scorers_ir
+    return (goal_scorers_ir,)
+
+
+@app.cell(hide_code=True)
+def _(K, goal_scorers_ir, match_expected_goals):
+    goals = (
+        goal_scorers_ir.join(
+            match_expected_goals,
+            on=[*K, "benefitting_team", "benefitting_team_score"],
+            how="full",
+            coalesce=True,
+        )
+        .filter(~pl.col("benefitting_team_score").eq(0))
+        .with_columns(
+            has_incomplete_minute_data=pl.coalesce(
+                pl.col("has_incomplete_minute_data"), pl.lit(True)
+            ),
+        )
+    )
+
+    goals
+    return (goals,)
+
+
+@app.cell
+def _(K, goals, match_data):
+    goals_agg = (
+        goals.group_by(*K, "benefitting_team")
+        .agg(
+            pl.col("benefitting_team_score").count().alias("goal_count"),
+            pl.col("goal_was_opponent_own_goal")
+            .arg_true()
+            .count()
+            .alias("known_opponent_own_goals"),
+            pl.col("goal_was_penalty").count().alias("known_penalties"),
+            pl.col("scorer").mode().first().alias("highest_goal_scorer"),
+        )
+        .join(
+            match_data.select(*K, "final_home_score", "final_away_score"), on=K
+        )
+        .with_columns(
+            match_benefitting_team_score=pl.when(
+                benefitting_team=pl.col("home_team")
+            )
+            .then(pl.col("final_home_score"))
+            .when(benefitting_team=pl.col("away_team"))
+            .then(pl.col("final_away_score"))
+        )
+        .select(
+            *K,
+            "benefitting_team",
+            pl.max_horizontal(pl.col("goal_count"), pl.col("match_benefitting_team_score")).alias("goals"),
+            "highest_goal_scorer",
+            "known_opponent_own_goals",
+            "known_penalties",
+        )
+        .sort("date", "home_team", "away_team", "benefitting_team")
+    )
+
+    goals_agg
     return
 
 
