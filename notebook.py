@@ -437,7 +437,7 @@ def _(K, goals_agg, match_data):
         _agg_for("home")
         .join(_agg_for("away"), on=K, how="full", coalesce=True)
         .join(
-            match_data.drop("final_home_score", "final_away_score"),
+            match_data,
             on=K,
             how="full",
             coalesce=True,
@@ -461,7 +461,7 @@ def _(K, goals_agg, match_data):
         )
     )
     matches
-    return
+    return (matches,)
 
 
 @app.cell(hide_code=True)
@@ -471,17 +471,17 @@ def _():
 
     Formalización técnica:
 
-    - Para el objetivo descriptivo: La tarea es de **clustering**. (incompleto)
-    - Para el objetivo predictivo: La tarea es de **clasificación supervisada**. El resultado debe ser un modelo (evaluado apropiadamente) que pueda predecir si un equipo ganó, empató o perdió según un registro detallado sobre penales acertados. (incompleto?)
+    - Para el objetivo descriptivo: La tarea es de **clustering**, segmentación de partidos por características de juego, época, torneo, localía, goles y penales.
+    - Para el objetivo predictivo: La tarea es de **clasificación supervisada**, predicción de resultado final (Victoria/Empate/Derrota) usando árboles de decisión y Naive Bayes.
 
     # Fase 6: Selección del algoritmo y proceso analítico
 
-    - Para el objetivo descriptivo:
-      - k-Means: (falta justificar)
-      - Gaussian Mixture: (falta justificar)
-    - Para el objetivo predictivo:
-      - XGBoost: El algoritmo es resistente al ruido y todo eso (falta terminar de justificar)
-      - Nearest Neighbors: (falta justificar)
+    - Para el objetivo descriptivo (clustering):
+      - K-Means: Algoritmo rápido, escalable, ideal para segmentación global. Requiere elegir $k$ y asume clusters esféricos.
+      - Agglomerative: Jerárquico, no requiere fijar $k$ de antemano, captura estructuras anidadas. Con Ward funciona bien con clusters compactos.
+    - Para el objetivo predictivo (clasificación):
+      - Árbol de Decisión: Interpretable, maneja variables numéricas y categóricas, captura no linealidades y permite extraer reglas. Se limita su tamaño para evitar overfitting.
+      - Naive Bayes: Base probabilística, rápido y simple.
     """)
     return
 
