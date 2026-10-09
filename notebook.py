@@ -42,11 +42,11 @@ def _():
     - Objetivo descriptivo: Un medio de comunicación quiere hacer una nota periodística que investigue si diversas características destacadas (según opinión popular) y eventos de partidos de fútbol están relacionados con el nivel de estrés causado al hincha promedio por cada partido. Como primer acercamiento, se busca reducir el número de partidos a analizar maximizando la representatividad, para luego hacer encuestas sobre el estrés percibido.
     - Objetivo predictivo: Un club deportivo quiere completar datos históricos de partidos internacionales (no cubiertos en estos _datasets_ actuales) para enviárselos a la RSSSF y necesita un proceso de verificación de consistencia para comparar diversas fuentes. Cada una de estas fuentes contiene un registro detallado de penales acertados (durante y post-juego) y el resultado final del partido (de tablas de clasificación y puntajes particulares), pero el resto está incompleto.
 
-    # Prerequisitos para la fase 2 pero técnicamente de la fase 3
+    # Fases 2 (creación del _target dataset_) y 3 (preprocesamiento y limpieza de los datos)
 
-    Algunas cosas son exclusivamente de la fase 3, pero igual se documenta todo junto
+    Es posible separar esto en 3 partes: La limpieza antes de crear el _target dataset_, la creación del mismo (`matches`) y la limpieza posterior, pero preferimos limpiarlo por pasos para que quede más sencillo de entender al leerse de forma secuencial.
 
-    Se encontraron cosas raras en los datos:
+    Se encontraron errores y faltantes en los datos:
 
     - En `match_results`:
       - Hay 20 claves primarias compuestas (fecha, equipo local, equipo visitante) repetidas. 17 eran un segundo registro de un partido de torneo como si hubiesen sido amistosos (Far Eastern Championship Games 1923-1934, African Friendship Games 1960); se conserva el del torneo. Las otras 3 eran dos partidos distintos con la misma fecha: Singapur-Malasia 0-3 el 07/09/1973; Guyana-Barbados 2-0 el 21/10/1977 y el 0-0 del 22/10 repetía el del 26/10; Tahiti-Nueva Caledonia 2-1 y 1-2 compartían 17/02/1974, con el 1-2 movido a 18/02/1974 solo para desambiguar.
@@ -195,16 +195,10 @@ def _(K, base_goal_scorers, base_match_results, base_penalty_shootouts):
 
 
 @app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    # Fase 2: Selección y creación del target dataset
-    """)
-    return
-
-
-@app.cell(hide_code=True)
 def ir_doc():
     mo.md(r"""
+    Con la limpieza por tabla en estado razonable, la siguiente tarea es empezar a unir todo. La idea es usar los datos de todas las tablas, aunque los objetivos refieran a partidos directamente. Al juntar todo, las fuentes se combinan para "tapar" faltantes en campos individuales. De igual manera, sigue habiendo muchos valores nulos. La mejor estrategia en este caso es hacer una versión simple de lo que hace la gente que trabaja de esto, que puede ser, por ejemplo, reemplazar los valores nulos por el promedio del resto.
+
     **Tablas intermedias:**
     - `goal_scorers_ir`: Una fila por gol de `goal_scorers`.
       <br>Suma las siguientes columnas:
