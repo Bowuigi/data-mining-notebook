@@ -436,14 +436,26 @@ def _(K, goals_agg):
             .drop("benefitting_team")
         )
 
-    match_stats = _agg_for("home").join(_agg_for("away"), on=K, how="full", coalesce=True).with_columns(
-        home_score=pl.coalesce(pl.col("home_score"), pl.lit(0)),
-        away_score=pl.coalesce(pl.col("away_score"), pl.lit(0)),
-        # Defaulting to deal with nulls here
-        home_known_opponent_own_goals=pl.coalesce(pl.col("home_known_opponent_own_goals"), pl.lit(0)),
-        away_known_opponent_own_goals=pl.coalesce(pl.col("away_known_opponent_own_goals"), pl.lit(0)),
-        home_known_penalties=pl.coalesce(pl.col("home_known_penalties"), pl.lit(0)),
-        away_known_penalties=pl.coalesce(pl.col("away_known_penalties"), pl.lit(0)),
+    match_stats = (
+        _agg_for("home")
+        .join(_agg_for("away"), on=K, how="full", coalesce=True)
+        .with_columns(
+            home_score=pl.coalesce(pl.col("home_score"), pl.lit(0)),
+            away_score=pl.coalesce(pl.col("away_score"), pl.lit(0)),
+            # Defaulting to deal with nulls here
+            home_known_opponent_own_goals=pl.coalesce(
+                pl.col("home_known_opponent_own_goals"), pl.lit(0)
+            ),
+            away_known_opponent_own_goals=pl.coalesce(
+                pl.col("away_known_opponent_own_goals"), pl.lit(0)
+            ),
+            home_known_penalties=pl.coalesce(
+                pl.col("home_known_penalties"), pl.lit(0)
+            ),
+            away_known_penalties=pl.coalesce(
+                pl.col("away_known_penalties"), pl.lit(0)
+            ),
+        )
     )
     match_stats
     return (match_stats,)
