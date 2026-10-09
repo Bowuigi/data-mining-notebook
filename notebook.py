@@ -40,6 +40,7 @@ with app.setup(hide_code=True):
     # Para poder graficar conjuntos grandes de datos
     alt.data_transformers.enable("vegafusion")
 
+
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
@@ -57,18 +58,18 @@ def _():
     Se encontraron errores y faltantes en los datos:
 
     - En `match_results`:
-      - Hay 20 claves primarias compuestas (fecha, equipo local, equipo visitante) repetidas. 17 eran un segundo registro de un partido de torneo como si hubiesen sido amistosos (Far Eastern Championship Games 1923-1934, African Friendship Games 1960); se conserva el del torneo. Las otras 3 eran dos partidos distintos con la misma fecha: Singapur-Malasia 0-3 el 07/09/1973; Guyana-Barbados 2-0 el 21/10/1977 y el 0-0 del 22/10 repetía el del 26/10; Tahiti-Nueva Caledonia 2-1 y 1-2 compartían 17/02/1974, con el 1-2 movido a 18/02/1974 solo para desambiguar.
+      - Hay 20 claves primarias compuestas (fecha, equipo local, equipo visitante) repetidas. 17 eran un segundo registro de un partido de torneo como si hubiesen sido amistosos (Far Eastern Championship Games 1923-1934, African Friendship Games 1960); se conserva el del torneo en cada caso. Las otras 3 eran dos partidos distintos con la misma fecha: Singapur-Malasia 0-3 el 07/09/1973; Guyana-Barbados 2-0 el 21/10/1977 y el 0-0 del 22/10 repetía el del 26/10; Tahiti-Nueva Caledonia 2-1 y 1-2 compartían 17/02/1974, con el 1-2 movido a 18/02/1974 solo para desambiguar.
       - Uruguay-Bolivia el 27/06/2024 figura 4-0 y `goal_scorers` registra 5 goles (que es correcto). Se reconcilia automáticamente al unir las tablas.
       - `country` tiene nombres obsoletos.  Se agregan `normalized_country` (sucesor único) y `region` (región geográfica actual). Los paises con varios sucesores (URSS, Yugoslavia, Checoslovaquia, Serbia y Montenegro, Zanzibar) conservan el nombre histórico.
       - `city` tenía ciudades que estaban repetidas pero escritas distinto. Se usaron aliases para corregirlas.
       - Algunos equipos tenían nombres obsoletos. Se utilizaron aliases para su corrección.
     - En `goal_scorers`:
       - Varios pares de goleadores diferían sólo en caracteres no-ASCII. Se unifican mediante transliteración.
-      - Hay 259 goles sin `minute`, entre el 16/10/1960 y el 31/03/1997.
-      - Hay 49 goles sin `scorer`, entre el 24/02/1980 y el 23/09/1980.
+      - Hay 259 goles sin `minute`, entre el 16/10/1960 y el 31/03/1997. Se registra su inexistencia y se preserva, porque puede servir para informarle a los modelos que esos datos están incompletos.
+      - Hay 49 goles sin `scorer`, entre el 24/02/1980 y el 23/09/1980. Quedan como están.
     - En `penalty_shootouts`:
-      - Hay 37 rondas de penales con marcador no empatado. Es normal (aunque inesperado) por las reglas del fútbol de ese momento.
-      - `first_shooter` es nulo en más de la mitad de los partidos.
+      - Hay 37 rondas de penales con marcador no empatado. Es normal (aunque inesperado) por las reglas del fútbol de ese momento. Se queda como está.
+      - `first_shooter` es nulo en más de la mitad de los partidos. Se utilizan los que están para ayudar a determinar si hubo tanda de penales.
       - Saare County / Saaremaa vs Åland Islands / Åland el 29/06/2011 es un desempate sin partido (ni fila en `match_results`). Aparte de este caso especial, la fuente está mal (ganó Åland, que figura de visitante). Se descarta la fila.
     """)
     return
@@ -136,6 +137,12 @@ def _(K, base_goal_scorers, base_match_results, base_penalty_shootouts):
             (pl.col("date") == pl.date(2011, 6, 29))
             & (pl.col("home_team") == "Saaremaa")
         )
+    )
+
+    # `first_shooter` is null in more than half the matches that had a shootout,
+    # so derive the shootout flag from the presence of a row instead.
+    penalty_shootouts = penalty_shootouts.with_columns(
+        pl.lit(True).alias("was_shootout")
     )
 
     # Duplicate friendly-tournament matches. Friendly duplicates removed
@@ -231,6 +238,9 @@ def ir_doc():
       <br>Suma las siguientes columnas a `match_results`:
       - `benefitting_team`: El equipo que se benefició del gol en ese momento (no hay que invertirlo para `own_goal`). Si es `NULL`, es el inicio del partido (fila incluída para no borrar partidos 0-0 y para poder obtener con facilidad sólo los partidos si hacen falta). Si no, es un gol.
       - `benefitting_team_score`: Marcador de ese equipo hasta e incluyendo ese gol. Si es 0 (y por tanto `benefitting_team` es `NULL`), es el inicio del partido. Si no, es un gol.
+    - `goal_scorers_ir`: Separa goles de `goal_scorers` por equipo beneficiado, corrigiendo el uso de own_goal
+    - `goals`: Une todos los datos relevantes de cada gol en cada momento
+    - `matches`: Une los datos de todas las tablas en un registro coherente sobre cada partido, aportando información derivada de cada tabla. Esta tabla eventualmente se transforma en la que utilizan los modelos.
     """)
     return
 
@@ -257,6 +267,7 @@ def _(K, match_results, penalty_shootouts):
             .then(pl.col("away_team")),
         ),
         "first_shooter",
+        pl.col("was_shootout").fill_null(False).alias("had_shootout"),
         pl.col("neutral").alias("neutral_field"),
     )
     match_data
@@ -448,7 +459,7 @@ def _(K, goals_agg, match_data):
             .drop("benefitting_team")
         )
 
-    matches = (
+    u_matches = (
         _agg_for("home")
         .join(_agg_for("away"), on=K, how="full", coalesce=True)
         .join(
@@ -475,8 +486,48 @@ def _(K, goals_agg, match_data):
             ),
         )
     )
-    matches
+    u_matches
+    return (u_matches,)
+
+
+@app.cell
+def _(u_matches):
+    _home = alt.Chart(u_matches).mark_boxplot().encode(x="home_score")
+    _away = alt.Chart(u_matches).mark_boxplot().encode(x="away_score")
+
+    matches = u_matches.filter(
+        (pl.col("home_score") < 7).and_(pl.col("away_score") < pl.lit(7))
+    )
+    _home | _away
     return (matches,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Se observa un gran número de outliers, que pueden confundir a los modelos más adelante. Se eliminan estos outliers de _matches_ para no contaminar al resto. Además de outliers, hay un gráfico más que puede ayudar a visibilizar en qué se centra este _dataset_:
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(matches):
+    _chart = (
+        alt.Chart(matches)
+        .mark_line()
+        .encode(
+            x=alt.X("date:T", title="Fecha"),
+            y=alt.Y("count():Q", title="Número de registros"),
+            tooltip=[
+                alt.Tooltip("date:T", title="date", timeUnit="yearmonthdate"),
+                alt.Tooltip(
+                    "count():Q", title="Número de registros", format=",.0f"
+                ),
+            ],
+        )
+    )
+    _chart
+    return
 
 
 @app.cell(hide_code=True)
@@ -509,16 +560,16 @@ def _(matches):
         .then(pl.lit("Moderna"))
         .otherwise(pl.lit("VAR")),
         # Señales que sirven a modo de casi-resultado (útil si el modelo las usa).
-        had_shootout=pl.col("first_shooter").is_not_null().cast(pl.Boolean),
-        shootout_first_shooter_is_home=(
-            pl.col("first_shooter") == pl.col("home_team")
-        ).cast(pl.Int8),
+        # `had_shootout` ya viene de `match_data` (derivado de la presencia de
+        # fila en `penalty_shootouts`, no de `first_shooter`, que es nulo en
+        # más de la mitad de los partidos con desempate).
+        shootout_first_shooter_is_home=pl.when(pl.col("had_shootout"))
+        .then((pl.col("first_shooter") == pl.col("home_team")).cast(pl.Int8))
+        .otherwise(pl.lit(0, dtype=pl.Int8)),
         # Normalización numérica de funcionalidad ya existente (agrupaciones estructurales)
+        # Cabe destacar que estos campos se hacen presentes al clasificador porque el segundo objetivo no es predicción pre-partido sino una estimación/predicción a modo de verificación de fuentes
         total_known_penalties=(
             pl.col("home_known_penalties") + pl.col("away_known_penalties")
-        ),
-        penalty_balance=(
-            pl.col("home_known_penalties") - pl.col("away_known_penalties")
         ),
         own_goal_balance=(
             pl.col("home_known_opponent_own_goals")
@@ -533,6 +584,99 @@ def _(matches):
     )
     df
     return (df,)
+
+
+@app.cell
+def _(df):
+    df_id = df.with_row_index("match_id")
+
+    _long = pl.concat(
+        [
+            df_id.select(
+                "match_id",
+                "date",
+                pl.col("home_team").alias("team"),
+                pl.when(pl.col("home_result") == "Victoria")
+                .then(1)
+                .otherwise(0)
+                .alias("win"),
+                pl.when(pl.col("home_result") == "Empate")
+                .then(1)
+                .otherwise(0)
+                .alias("draw"),
+                pl.col("home_score").alias("gf"),
+                pl.col("away_score").alias("ga"),
+            ),
+            df_id.select(
+                "match_id",
+                "date",
+                pl.col("away_team").alias("team"),
+                pl.when(pl.col("home_result") == "Derrota")
+                .then(1)
+                .otherwise(0)
+                .alias("win"),
+                pl.when(pl.col("home_result") == "Empate")
+                .then(1)
+                .otherwise(0)
+                .alias("draw"),
+                pl.col("away_score").alias("gf"),
+                pl.col("home_score").alias("ga"),
+            ),
+        ]
+    )
+
+    _long = (
+        _long.sort("team", "date", "match_id")
+        .with_columns(
+            prior_matches=(pl.int_range(1, pl.len() + 1).over("team") - 1),
+            prior_wins=(pl.col("win").cum_sum().over("team") - pl.col("win")),
+            prior_draws=(
+                pl.col("draw").cum_sum().over("team") - pl.col("draw")
+            ),
+            prior_gf=(pl.col("gf").cum_sum().over("team") - pl.col("gf")),
+            prior_ga=(pl.col("ga").cum_sum().over("team") - pl.col("ga")),
+        )
+        .with_columns(
+            prior_win_rate=pl.when(pl.col("prior_matches") > 0)
+            .then(pl.col("prior_wins") / pl.col("prior_matches"))
+            .otherwise(0.5),
+            prior_avg_gf=pl.when(pl.col("prior_matches") > 0)
+            .then(pl.col("prior_gf") / pl.col("prior_matches"))
+            .otherwise(1.0),
+            prior_avg_ga=pl.when(pl.col("prior_matches") > 0)
+            .then(pl.col("prior_ga") / pl.col("prior_matches"))
+            .otherwise(1.0),
+        )
+    )
+
+    def _side_form(team_col: str, prefix: str):
+        return (
+            _long.join(df_id.select("match_id", team_col), on="match_id")
+            .filter(pl.col("team") == pl.col(team_col))
+            .select(
+                "match_id",
+                pl.col("prior_win_rate").alias(f"{prefix}_form_win_rate"),
+                pl.col("prior_avg_gf").alias(f"{prefix}_form_avg_gf"),
+                pl.col("prior_avg_ga").alias(f"{prefix}_form_avg_ga"),
+                pl.col("prior_matches").alias(f"{prefix}_form_matches"),
+            )
+        )
+
+    df_feat = (
+        df_id.join(_side_form("home_team", "home"), on="match_id")
+        .join(_side_form("away_team", "away"), on="match_id")
+        .with_columns(
+            form_win_diff=pl.col("home_form_win_rate")
+            - pl.col("away_form_win_rate"),
+            form_gf_diff=pl.col("home_form_avg_gf")
+            - pl.col("away_form_avg_gf"),
+            form_ga_diff=pl.col("home_form_avg_ga")
+            - pl.col("away_form_avg_ga"),
+        )
+        .drop("match_id")
+    )
+    df_feat
+    return (df_feat,)
 
 
 @app.cell(hide_code=True)
@@ -576,14 +720,13 @@ def _():
 @app.cell
 def _(df):
     CLUST_NUM = [
-        "year",
+        # "year",
         "month",
         "home_score",
         "away_score",
-        "total_goals",
-        "goal_diff",
+        # "total_goals",
+        # "goal_diff",
         "total_known_penalties",
-        "penalty_balance",
         "own_goal_balance",
         "neutral_field",
     ]
@@ -607,26 +750,28 @@ def _(df):
 
 @app.cell
 def _(X_scaled):
-    # K-Means: buscar k por silhouette
+    # K-Means: buscar k por silhouette (submuestreado para evitar O(n²))
+    rng = np.random.default_rng(0)
+    idx_sil = rng.choice(len(X_scaled), size=5000, replace=False)
     sil = {}
-    for k in range(2, 4):
+    for k in range(3, 9):
         _km = KMeans(n_clusters=k, random_state=0, n_init=10)
         labels = _km.fit_predict(X_scaled)
-        sil[k] = silhouette_score(X_scaled, labels)
+        sil[k] = silhouette_score(X_scaled[idx_sil], labels[idx_sil])
     return (sil,)
 
 
 @app.cell
 def _(X_scaled, sil):
     best_k = max(sil, key=sil.get)
-    km = KMeans(n_clusters=3, random_state=0, n_init=10)
+    km = KMeans(n_clusters=best_k, random_state=0, n_init=10)
     labels_km = km.fit_predict(X_scaled)
     return best_k, labels_km
 
 
 @app.cell
 def _(X_scaled, best_k):
-    birch = Birch(n_clusters=best_k, threshold=0.5, branching_factor=50)
+    birch = Birch(n_clusters=best_k, threshold=0.2, branching_factor=50)
     labels_birch = birch.fit_predict(X_scaled)
     return (labels_birch,)
 
@@ -688,8 +833,13 @@ def _(X_scaled, labels_birch, labels_km, sil):
     sil_df = pl.DataFrame(
         {"k": list(sil.keys()), "silhouette": list(sil.values())}
     )
+    return sil_df, viz
+
+
+@app.cell
+def _(sil_df):
     sil_df
-    return (viz,)
+    return
 
 
 @app.cell
@@ -716,6 +866,217 @@ def _(viz):
         .properties(width=400, height=300, title="Clusters BIRCH (PCA)")
     )
     chart
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Clasificación
+    """)
+    return
+
+
+@app.cell
+def _(df_feat):
+    CLS_NUM = [
+        "year",
+        "month",
+        "home_known_penalties",
+        "away_known_penalties",
+        "home_known_opponent_own_goals",
+        "away_known_opponent_own_goals",
+        "had_shootout",
+        "shootout_first_shooter_is_home",
+        "neutral_field",
+        "total_known_penalties",
+        "own_goal_balance",
+        "home_form_win_rate",
+        "away_form_win_rate",
+        "form_win_diff",
+        "home_form_avg_gf",
+        "away_form_avg_gf",
+        "form_gf_diff",
+        "home_form_avg_ga",
+        "away_form_avg_ga",
+        "form_ga_diff",
+        "home_form_matches",
+        "away_form_matches",
+    ]
+    CLS_CAT = ["region", "era", "home_team", "away_team"]
+
+    _X = (
+        df_feat.select(
+            [pl.col(c).cast(pl.Float64) for c in CLS_NUM]
+            + [pl.col(c).cast(pl.String) for c in CLS_CAT]
+        )
+        .to_dummies(columns=CLS_CAT, drop_first=False)
+        .fill_null(0)
+    )
+
+    cls_X = _X.to_numpy().astype(float)
+    cls_feature_names = _X.columns
+    cls_y = df_feat["home_result"].to_numpy()
+    return cls_X, cls_y
+
+
+@app.cell
+def _(cls_X, cls_y, df_feat):
+    LABELS = ["Victoria", "Empate", "Derrota"]
+    years = df_feat["year"].to_numpy()
+    cutoff = int(np.quantile(years, 0.5))
+
+    def _():
+        from sklearn.tree import DecisionTreeClassifier
+        from sklearn.naive_bayes import GaussianNB
+        from sklearn.metrics import classification_report, confusion_matrix
+
+        tr = years <= cutoff
+        te = years > cutoff
+
+        X_tr, X_te = cls_X[tr], cls_X[te]
+        y_tr, y_te = cls_y[tr], cls_y[te]
+
+        results, fitted = {}, {}
+
+        for name, model in {
+            "DecisionTree": DecisionTreeClassifier(
+                max_depth=10,
+                min_samples_leaf=50,
+                class_weight="balanced",
+                random_state=0,
+            ),
+            "GaussianNB": GaussianNB(),
+        }.items():
+            model.fit(X_tr, y_tr)
+            pred = model.predict(X_te)
+            results[name] = {
+                "report": classification_report(
+                    y_te,
+                    pred,
+                    labels=LABELS,
+                    output_dict=True,
+                    zero_division=0,
+                ),
+                "cm": confusion_matrix(y_te, pred, labels=LABELS),
+            }
+            fitted[name] = model
+
+        summary = pl.DataFrame(
+            [
+                {
+                    "model": n,
+                    "accuracy": r["report"]["accuracy"],
+                    "macro_f1": r["report"]["macro avg"]["f1-score"],
+                    "victoria_f1": r["report"]["Victoria"]["f1-score"],
+                    "empate_f1": r["report"]["Empate"]["f1-score"],
+                    "derrota_f1": r["report"]["Derrota"]["f1-score"],
+                }
+                for n, r in results.items()
+            ]
+        )
+        return results, summary
+
+    results, summary = _()
+    summary
+    return LABELS, cutoff, results
+
+
+@app.cell
+def _(LABELS, cutoff, results):
+    rows = []
+    for name, r in results.items():
+        cm = r["cm"]
+        for i, real in enumerate(LABELS):
+            for j, pred in enumerate(LABELS):
+                rows.append(
+                    {
+                        "model": name,
+                        "real": real,
+                        "pred": pred,
+                        "count": int(cm[i, j]),
+                    }
+                )
+    cm_df = pl.DataFrame(rows)
+
+    base = alt.Chart(cm_df).encode(
+        x=alt.X("pred:N", title="Predicho", sort=LABELS),
+        y=alt.Y("real:N", title="Real", sort=LABELS),
+    )
+    heat = base.mark_rect().encode(
+        color=alt.Color("count:Q", scale=alt.Scale(scheme="blues"), title="n")
+    )
+    text = base.mark_text(baseline="middle", fontSize=13).encode(
+        text="count:Q",
+        color=alt.condition(
+            alt.datum.count > cm_df["count"].max() / 2,
+            alt.value("white"),
+            alt.value("black"),
+        ),
+    )
+    (heat + text).properties(
+        width=220, height=220, title=f"Corte temporal: año > {cutoff}"
+    ).facet(column=alt.Column("model:N", title=None)).resolve_scale(
+        color="independent"
+    )
+    return
+
+
+@app.cell
+def _(results):
+    def _():
+        rows = []
+        for name, r in results.items():
+            rep = r["report"]
+            for label in ["Victoria", "Empate", "Derrota"]:
+                rows.append(
+                    {
+                        "model": name,
+                        "class": label,
+                        "precision": rep[label]["precision"],
+                        "recall": rep[label]["recall"],
+                        "f1": rep[label]["f1-score"],
+                        "support": int(rep[label]["support"]),
+                    }
+                )
+            rows.append(
+                {
+                    "model": name,
+                    "class": "macro avg",
+                    "precision": rep["macro avg"]["precision"],
+                    "recall": rep["macro avg"]["recall"],
+                    "f1": rep["macro avg"]["f1-score"],
+                    "support": int(rep["macro avg"]["support"]),
+                }
+            )
+
+        metrics_df = pl.DataFrame(rows).sort(["model", "class"])
+        return metrics_df
+
+
+    _()
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Conclusión
+
+    Ambos modelos de clustering tuvieron problemas para encontrar grupos naturales en los datos.
+    - El coeficiente de Silhouette es muy bajo, lo que significa que los grupos encontrados están muy pegados
+    - Aumentar la cantidad de clusters no ayuda.
+    - Quitar variables con distribuciones desbalanceadas (el año, por ejemplo) tiene impacto positivo en el modelo k-Means pero no el suficiente.
+    - Birch está hecho para conjuntos de datos mucho más grandes que el que pensábamos, y por eso se apuró a encontrar grupos grandes, a pesar de que redujéramos el parámetro que controlaba (indirectamente) el tamaño de los grupos. Tener un sólo grupo para prácticamente todo no es muy útil que digamos.
+
+    Los clasificadores superan apenas el azar (40/47% vs 33% teórico):
+    - El árbol de decisión logra mejor precisión y detecta mejor las victorias (por ser más optimista), pero le erra bastante en los empates (también por ser más optimista).
+    - El tipo de Naive Bayes usado (GaussianNB) decidió tomar el camino "seguro" y decir que la mayoría de partidos son empates, cosa que es rara porque los datos no reflejan eso tan directamente. La falta de datos adicionales relevantes en un partido de fútbol (ej. la condición física de los jugadores) podría ayudar a explicar el bajo desempeño (además de nuestra poca experiencia en el área). Se concluye que la clasificación no es viable con las _features_ actuales para una predicción confiable, aunque sirve como línea de base exploratoria por acercarse al 33% teórico sin necesariamente elegir al azar.
+
+    Los patrones descubiertos son novedosos, pero no aportan suficiente información relevante como para "hacer la diferencia" para cualquiera de los dos objetivos. Los modelos no son inútiles tampoco, en muchos casos tienen la razón.
+
+    **¿Significa esto que estamos despedidos de ambas empresas?** No, porque la limpieza de datos se pudo ejecutar de mejor forma que la última etapa, y ser _junior_ trae ventajas. ¿Se puede mejorar? Es probable, si, pero no lo hablamos con otras personas del curso para saber si lo hicieron mejor o algo así.
+    """)
     return
 
 
