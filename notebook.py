@@ -205,7 +205,7 @@ def _(K, base_goal_scorers, base_match_results, base_penalty_shootouts):
 @app.cell(hide_code=True)
 def ir_doc():
     mo.md(r"""
-    Con la limpieza por tabla en estado razonable, la siguiente tarea es empezar a unir todo. La idea es usar los datos de todas las tablas, aunque los objetivos refieran a partidos directamente. Al juntar todo, las fuentes se combinan para "tapar" faltantes en campos individuales. De igual manera, sigue habiendo muchos valores nulos. La mejor estrategia en este caso es hacer una versión simple de lo que hace la gente que trabaja de esto, que puede ser, por ejemplo, reemplazar los valores nulos por el promedio del resto.
+    Con la limpieza por tabla en estado razonable, la siguiente tarea es empezar a unir todo. La idea es usar los datos de todas las tablas, aunque los objetivos refieran a partidos directamente. Al juntar todo, las fuentes se combinan para "tapar" faltantes en campos individuales. De igual manera, sigue habiendo muchos valores nulos. La mejor estrategia en este caso, no para preservar la varianza sino para entender los datos _en su contexto de negocio_ (las fuentes no son siempre confiables para ninguno de los dos objetivos), es no esconder la falta de datos, sino que hacerla otra cosa que los modelos puedan usar.
 
     **Tablas intermedias:**
     - `goal_scorers_ir`: Una fila por gol de `goal_scorers`.
