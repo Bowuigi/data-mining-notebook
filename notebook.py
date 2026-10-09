@@ -330,7 +330,7 @@ def goal_scorers_ir(K, goal_scorers):
             benefitting_team_score=pl.int_range(1, pl.len() + 1).over(
                 *K, "team"
             ),
-            has_incomplete_minute_data=pl.col("minute").is_null().over(*K),
+            has_incomplete_minute_data=pl.col("minute").is_null().any().over(*K),
         )
         .rename(
             {
@@ -385,11 +385,8 @@ def _(K, goals, match_data):
         .agg(
             pl.col("benefitting_team_score").count().alias("goal_count"),
             # Currently defaulting for own_goals and penalties. Attempt other methods to mitigate NULL values
-            pl.col("goal_was_opponent_own_goal")
-            .arg_true()
-            .count()
-            .alias("known_opponent_own_goals"),
-            pl.col("goal_was_penalty").count().alias("known_penalties"),
+            pl.col("goal_was_opponent_own_goal").fill_null(False).cast(pl.Int8).sum().alias("known_opponent_own_goals"),
+            pl.col("goal_was_penalty").fill_null(False).cast(pl.Int8).sum().alias("known_penalties"),
             pl.col("scorer").mode().first().alias("highest_goal_scorer"),
         )
         .join(
