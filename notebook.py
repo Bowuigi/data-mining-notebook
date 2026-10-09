@@ -384,6 +384,7 @@ def _(K, goals, match_data):
         goals.group_by(*K, "benefitting_team")
         .agg(
             pl.col("benefitting_team_score").count().alias("goal_count"),
+            # Currently defaulting for own_goals and penalties. Attempt other methods to mitigate NULL values
             pl.col("goal_was_opponent_own_goal")
             .arg_true()
             .count()
@@ -405,7 +406,9 @@ def _(K, goals, match_data):
         .select(
             *K,
             "benefitting_team",
-            pl.max_horizontal(pl.col("goal_count"), pl.col("match_benefitting_team_score")).alias("goals"),
+            pl.max_horizontal(
+                pl.col("goal_count"), pl.col("match_benefitting_team_score")
+            ).alias("goals"),
             "highest_goal_scorer",
             "known_opponent_own_goals",
             "known_penalties",
@@ -414,6 +417,35 @@ def _(K, goals, match_data):
     )
 
     goals_agg
+    return (goals_agg,)
+
+
+@app.cell
+def _(K, goals_agg):
+    def _agg_for(side: str):
+        return (
+            goals_agg.filter(benefitting_team=pl.col(f"{side}_team"))
+            .rename(
+                {
+                    "goals": f"{side}_score",
+                    "highest_goal_scorer": f"{side}_highest_goal_scorer",
+                    "known_opponent_own_goals": f"{side}_known_opponent_own_goals",
+                    "known_penalties": f"{side}_known_penalties",
+                }
+            )
+            .drop("benefitting_team")
+        )
+
+    match_stats = _agg_for("home").join(_agg_for("away"), on=K, how="full", coalesce=True).with_columns(
+        home_score=pl.coalesce(pl.col("home_score"), pl.lit(0)),
+        away_score=pl.coalesce(pl.col("away_score"), pl.lit(0)),
+        # Defaulting to deal with nulls here
+        home_known_opponent_own_goals=pl.coalesce(pl.col("home_known_opponent_own_goals"), pl.lit(0)),
+        away_known_opponent_own_goals=pl.coalesce(pl.col("away_known_opponent_own_goals"), pl.lit(0)),
+        home_known_penalties=pl.coalesce(pl.col("home_known_penalties"), pl.lit(0)),
+        away_known_penalties=pl.coalesce(pl.col("away_known_penalties"), pl.lit(0)),
+    )
+    match_stats
     return
 
 
