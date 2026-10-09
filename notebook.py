@@ -572,5 +572,152 @@ def _():
     """)
     return
 
+
+@app.cell
+def _(df):
+    CLUST_NUM = [
+        "year",
+        "month",
+        "home_score",
+        "away_score",
+        "total_goals",
+        "goal_diff",
+        "total_known_penalties",
+        "penalty_balance",
+        "own_goal_balance",
+        "neutral_field",
+    ]
+    CLUST_CAT = ["tournament", "region", "era", "had_shootout"]
+
+    X_clust = (
+        df.select(
+            [pl.col(c).cast(pl.Float64) for c in CLUST_NUM]
+            + [pl.col(c).cast(pl.String) for c in CLUST_CAT]
+        )
+        .to_dummies(columns=CLUST_CAT, drop_first=False)
+        .fill_null(0)
+        .to_numpy()
+        .astype(float)
+    )
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_clust)
+    return (X_scaled,)
+
+
+@app.cell
+def _(X_scaled):
+    # K-Means: buscar k por silhouette
+    sil = {}
+    for k in range(2, 4):
+        _km = KMeans(n_clusters=k, random_state=0, n_init=10)
+        labels = _km.fit_predict(X_scaled)
+        sil[k] = silhouette_score(X_scaled, labels)
+    return (sil,)
+
+
+@app.cell
+def _(X_scaled, sil):
+    best_k = max(sil, key=sil.get)
+    km = KMeans(n_clusters=3, random_state=0, n_init=10)
+    labels_km = km.fit_predict(X_scaled)
+    return best_k, labels_km
+
+
+@app.cell
+def _(X_scaled, best_k):
+    birch = Birch(n_clusters=best_k, threshold=0.5, branching_factor=50)
+    labels_birch = birch.fit_predict(X_scaled)
+    return (labels_birch,)
+
+
+@app.cell
+def _(df, labels_birch, labels_km):
+    df_clusters = df.with_columns(
+        cluster_kmeans=pl.Series(labels_km),
+        cluster_birch=pl.Series(labels_birch),
+    )
+
+    profile_kmeans = (
+        df_clusters.group_by("cluster_kmeans")
+        .agg(
+            pl.len().alias("n"),
+            pl.col("home_score").mean().alias("avg_home_score"),
+            pl.col("away_score").mean().alias("avg_away_score"),
+            pl.col("total_goals").mean().alias("avg_total_goals"),
+            pl.col("goal_diff").mean().alias("avg_goal_diff"),
+            pl.col("year").mean().alias("avg_year"),
+            pl.col("total_known_penalties").mean().alias("avg_penalties"),
+            pl.col("had_shootout").mean().alias("pct_shootout"),
+        )
+        .sort("cluster_kmeans")
+    )
+
+    profile_birch = (
+        df_clusters.group_by("cluster_birch")
+        .agg(
+            pl.len().alias("n"),
+            pl.col("home_score").mean().alias("avg_home_score"),
+            pl.col("away_score").mean().alias("avg_away_score"),
+            pl.col("total_goals").mean().alias("avg_total_goals"),
+            pl.col("goal_diff").mean().alias("avg_goal_diff"),
+            pl.col("year").mean().alias("avg_year"),
+            pl.col("total_known_penalties").mean().alias("avg_penalties"),
+            pl.col("had_shootout").mean().alias("pct_shootout"),
+        )
+        .sort("cluster_birch")
+    )
+
+    mo.vstack([profile_kmeans, profile_birch])
+    return
+
+
+@app.cell
+def _(X_scaled, labels_birch, labels_km, sil):
+    pca = PCA(n_components=2, random_state=0)
+    coords = pca.fit_transform(X_scaled)
+    viz = pl.DataFrame(
+        {
+            "pc1": coords[:, 0],
+            "pc2": coords[:, 1],
+            "kmeans": labels_km,
+            "birch": labels_birch,
+        }
+    )
+
+    sil_df = pl.DataFrame(
+        {"k": list(sil.keys()), "silhouette": list(sil.values())}
+    )
+    sil_df
+    return (viz,)
+
+
+@app.cell
+def _(viz):
+    chart = (
+        alt.Chart(viz)
+        .mark_circle(size=30, opacity=0.5)
+        .encode(
+            x="pc1:Q",
+            y="pc2:Q",
+            color=alt.Color("kmeans:N", title="Cluster K-Means"),
+            tooltip=["pc1:Q", "pc2:Q", "kmeans:N", "birch:N"],
+        )
+        .properties(width=400, height=300, title="Clusters K-Means (PCA)")
+    ) | (
+        alt.Chart(viz)
+        .mark_circle(size=30, opacity=0.5)
+        .encode(
+            x="pc1:Q",
+            y="pc2:Q",
+            color=alt.Color("birch:N", title="Cluster BIRCH"),
+            tooltip=["pc1:Q", "pc2:Q", "kmeans:N", "birch:N"],
+        )
+        .properties(width=400, height=300, title="Clusters BIRCH (PCA)")
+    )
+    chart
+    return
+
+
 if __name__ == "__main__":
     app.run()
