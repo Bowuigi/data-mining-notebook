@@ -421,7 +421,7 @@ def _(K, goals, match_data):
 
 
 @app.cell
-def _(K, goals_agg):
+def _(K, goals_agg, match_data):
     def _agg_for(side: str):
         return (
             goals_agg.filter(benefitting_team=pl.col(f"{side}_team"))
@@ -436,9 +436,15 @@ def _(K, goals_agg):
             .drop("benefitting_team")
         )
 
-    match_stats = (
+    matches = (
         _agg_for("home")
         .join(_agg_for("away"), on=K, how="full", coalesce=True)
+        .join(
+            match_data.drop("final_home_score", "final_away_score"),
+            on=K,
+            how="full",
+            coalesce=True,
+        )
         .with_columns(
             home_score=pl.coalesce(pl.col("home_score"), pl.lit(0)),
             away_score=pl.coalesce(pl.col("away_score"), pl.lit(0)),
@@ -457,13 +463,6 @@ def _(K, goals_agg):
             ),
         )
     )
-    match_stats
-    return (match_stats,)
-
-
-@app.cell
-def _(K, match_data, match_stats):
-    matches = match_stats.join(match_data, on=K)
     matches
     return
 
