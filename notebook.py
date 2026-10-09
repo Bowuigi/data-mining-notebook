@@ -470,18 +470,16 @@ def _():
 
 @app.cell
 def _(matches):
-    # ---------- Fase 4: Feature engineering ----------
     df = matches.with_columns(
-        # Label (A): 90/120-minute result from home team's view.
+        # Resultado del partido mismo con el local como centro.
         home_result=pl.when(pl.col("final_home_score") > pl.col("final_away_score"))
         .then(pl.lit("Victoria"))
         .when(pl.col("final_home_score") < pl.col("final_away_score"))
         .then(pl.lit("Derrota"))
         .otherwise(pl.lit("Empate")),
-        # Temporal derivation (Fase 4).
+        # Varias de las derivaciones temporales pedidas.
         year=pl.col("date").dt.year(),
         month=pl.col("date").dt.month(),
-        # "Eras" — the assignment explicitly asks for this.
         era=pl.when(pl.col("date") < pl.date(1945, 1, 1))
         .then(pl.lit("Pre-guerra"))
         .when(pl.col("date") < pl.date(1990, 1, 1))
@@ -489,12 +487,12 @@ def _(matches):
         .when(pl.col("date") < pl.date(2018, 1, 1))
         .then(pl.lit("Moderna"))
         .otherwise(pl.lit("VAR")),
-        # Pre-result signals derived from first_shooter.
+        # Señales que sirven a modo de casi-resultado (útil si el modelo las usa).
         had_shootout=pl.col("first_shooter").is_not_null().cast(pl.Boolean),
         shootout_first_shooter_is_home=(
             pl.col("first_shooter") == pl.col("home_team")
         ).cast(pl.Int8),
-        # Numeric normalizations of existing features.
+        # Normalización numérica de funcionalidad ya existente (agrupaciones estructurales)
         total_known_penalties=(
             pl.col("home_known_penalties") + pl.col("away_known_penalties")
         ),
@@ -507,7 +505,7 @@ def _(matches):
         ),
     )
 
-    # Leaky-only features (clustering only, not for the classifier).
+    # Columnas que sirven para clustering pero no pueden usarse para clasificación (porque sería prácticamente regalar el resultado)
     df = df.with_columns(
         total_goals=pl.col("home_score") + pl.col("away_score"),
         goal_diff=pl.col("home_score") - pl.col("away_score"),
