@@ -21,7 +21,7 @@ import marimo
 __generated_with = "0.25.1"
 app = marimo.App(app_title="DM Fútbol", sql_output="polars")
 
-with app.setup:
+with app.setup(hide_code=True):
     ### Import libraries as required
     import marimo as mo
     import polars as pl
@@ -64,7 +64,7 @@ def _():
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     def _from_csv(filename):
         return pl.read_csv(
@@ -231,7 +231,7 @@ def ir_doc():
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(K, match_results, penalty_shootouts):
     # One row per match: who played, where, when and the final score.
     match_data = match_results.join(
@@ -259,7 +259,7 @@ def _(K, match_results, penalty_shootouts):
     return (match_data,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(match_data):
     _match_data = match_data.lazy()
     MATCH_INFO = [
